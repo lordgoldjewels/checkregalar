@@ -18,10 +18,21 @@ import {
   startScrapeRun,
   finishScrapeRun,
 } from "./db.mjs";
+import { notify } from "./telegram.mjs";
 
 if (!dbEnabled) {
   console.error("Supabase not configured - set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env");
   process.exit(1);
+}
+
+// Safety net: alert on any crash the per-account try/catch didn't already
+// handle (e.g. a Supabase outage, a bug in the loop itself).
+for (const event of ["uncaughtException", "unhandledRejection"]) {
+  process.on(event, async (err) => {
+    console.error(`\nFatal ${event}:`, err);
+    await notify(`🔴 <b>Scrape run crashed</b> (${event})\n<code>${String(err?.message || err)}</code>`);
+    process.exit(1);
+  });
 }
 
 const headless = process.argv.includes("--headless");
@@ -57,6 +68,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
     console.error(`Session for ${phone} has expired. Re-run: npm run login -- ${phone}`);
     await browser.close();
     await finishScrapeRun(runId, { status: "session_expired", accountsScraped, errors: [{ error: "session expired" }] });
+    await notify(`🔴 <b>Session expired</b> for ${phone} - run <code>npm run login -- ${phone}</code> to re-authenticate.`);
     continue;
   }
 
@@ -109,4 +121,12 @@ for (const { phone_number: phone, status } of phoneSessions) {
     accountsScraped,
     errors: runErrors.length ? runErrors : null,
   });
+
+  if (runErrors.length > 0) {
+    const lines = runErrors.map((e) => `  - ${e.memberId} at ${e.step}: ${e.error}`).join("\n");
+    await notify(
+      `🟠 <b>Scrape partially failed</b> for ${phone}\n` +
+        `${accountsScraped}/${accounts.length} accounts succeeded.\n\n${lines}`
+    );
+  }
 }

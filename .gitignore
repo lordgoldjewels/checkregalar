@@ -3,3 +3,4 @@ auth/
 data/
 .playwright-mcp/
 .env
+.DS_Store

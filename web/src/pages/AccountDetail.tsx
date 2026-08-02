@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
 import { formatINR, formatNumber, formatDateTime, formatDate } from "../lib/format";
+import { downloadCsv } from "../lib/csv";
 
 interface Account {
   member_id: string;
@@ -107,6 +108,22 @@ export default function AccountDetail() {
 
   const latest = snapshots[0];
 
+  function exportSalesIncentiveCsv() {
+    downloadCsv(
+      `sales-incentive-${memberId}.csv`,
+      ["Bill Date", "Invoice No", "From", "SI Value", "Status", "Pay Via"],
+      salesIncentive.map((r) => [formatDate(r.bill_date), r.invoice_no, r.from_distributor, r.si_value, r.status, r.pay_via])
+    );
+  }
+
+  function exportTurnoverSalaryCsv() {
+    downloadCsv(
+      `turnover-salary-${memberId}.csv`,
+      ["Month", "Packets", "Total TB Salary", "Charges", "Net Total"],
+      turnoverSalary.map((r) => [r.month, r.no_of_packets, r.total_tb_salary, r.charges, r.net_total])
+    );
+  }
+
   if (loading) {
     return (
       <Layout>
@@ -161,7 +178,15 @@ export default function AccountDetail() {
         {latest && <p className="text-xs text-maroon-900/40 mb-8">as of {formatDateTime(latest.captured_at)}</p>}
 
         {/* Sales Incentive */}
-        <h2 className="text-lg font-semibold text-maroon-900 mb-3">Sales Incentive</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-maroon-900">Sales Incentive</h2>
+          <button
+            onClick={exportSalesIncentiveCsv}
+            className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+          >
+            Export CSV
+          </button>
+        </div>
         <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden mb-8 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -195,7 +220,15 @@ export default function AccountDetail() {
         </div>
 
         {/* Turnover-based Salary */}
-        <h2 className="text-lg font-semibold text-maroon-900 mb-3">Turnover-based Salary</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-maroon-900">Turnover-based Salary</h2>
+          <button
+            onClick={exportTurnoverSalaryCsv}
+            className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+          >
+            Export CSV
+          </button>
+        </div>
         <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

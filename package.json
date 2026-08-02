@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "login": "node src/login.mjs",
-    "scrape": "node src/scrape.mjs"
+    "scrape": "node src/scrape.mjs",
+    "scrape:headless": "node src/scrape.mjs --headless"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",

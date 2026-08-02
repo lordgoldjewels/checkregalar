@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
+import TrendChart from "../components/TrendChart";
 import { formatINR, formatDateTime } from "../lib/format";
 
 interface AccountRow {
@@ -107,6 +108,12 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+
+        {!loading && (
+          <div className="mb-6">
+            <TrendChart />
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center h-48 bg-white rounded-xl border border-maroon-100 shadow-sm">
