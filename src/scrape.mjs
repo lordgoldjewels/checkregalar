@@ -80,6 +80,14 @@ for (const { phone_number: phone, status } of phoneSessions) {
     continue;
   }
   if (page.url().includes("/auth/login")) {
+    // The "Account" tab click can briefly flash /auth/login while the app's
+    // router re-validates the session cookie async, then bounces back once
+    // it confirms the session is still valid - so a single URL read right
+    // after the click is prone to false positives. Give it a moment to
+    // settle and re-check before concluding the session is really expired.
+    await page.waitForTimeout(2000);
+  }
+  if (page.url().includes("/auth/login")) {
     console.error(`Session for ${phone} has expired. Re-run: npm run login -- ${phone}`);
     const debugDir = await captureFailure(page, {
       memberId: `_session_${phone}`,
