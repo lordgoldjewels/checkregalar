@@ -140,7 +140,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
       console.log(`     synced to Supabase`);
 
       if (newInvoices.length > 0 || salaryChanges.length > 0) {
-        earningUpdates.push({ memberId, name, newInvoices, salaryChanges });
+        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges });
       }
 
       accountsScraped++;
@@ -173,9 +173,11 @@ for (const { phone_number: phone, status } of phoneSessions) {
   }
 
   if (earningUpdates.length > 0) {
-    const lines = earningUpdates.flatMap(({ memberId, name, newInvoices, salaryChanges }) => [
-      ...newInvoices.map(
-        (inv) => `  ${name} (${memberId}): new Sales Incentive invoice ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
+    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges }) => [
+      ...invoiceChanges.map((inv) =>
+        inv.isNew
+          ? `  ${name} (${memberId}): new Sales Incentive invoice ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
+          : `  ${name} (${memberId}): Sales Incentive invoice ${inv.invoice_no} status ${inv.previousStatus} -> ${inv.status} (₹${inv.si_value})`
       ),
       ...salaryChanges.map((c) =>
         c.isNew

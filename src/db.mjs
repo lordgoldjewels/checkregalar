@@ -102,16 +102,20 @@ export async function insertDashboardSnapshot(accountId, capturedAt, dashboard) 
   if (error) throw new Error(`insertDashboardSnapshot(${accountId}): ${error.message}`);
 }
 
-/** Upserts sales incentive rows and returns the ones whose invoice_no is new for this account. */
+/**
+ * Upserts sales incentive rows and returns the ones worth flagging:
+ * a brand-new invoice_no, or an existing one whose status changed
+ * (e.g. PENDING -> PAID).
+ */
 export async function upsertSalesIncentive(accountId, rows) {
   if (!dbEnabled || rows.length === 0) return [];
 
   const { data: existing, error: fetchError } = await supabase
     .from("sales_incentive")
-    .select("invoice_no")
+    .select("invoice_no, status")
     .eq("account_id", accountId);
   if (fetchError) throw new Error(`upsertSalesIncentive(${accountId}) fetch: ${fetchError.message}`);
-  const existingInvoices = new Set((existing ?? []).map((r) => r.invoice_no));
+  const existingByInvoice = new Map((existing ?? []).map((r) => [r.invoice_no, r.status]));
 
   const records = rows.map((r) => ({
     account_id: accountId,
@@ -127,7 +131,12 @@ export async function upsertSalesIncentive(accountId, rows) {
     .upsert(records, { onConflict: "account_id,invoice_no" });
   if (error) throw new Error(`upsertSalesIncentive(${accountId}): ${error.message}`);
 
-  return records.filter((r) => !existingInvoices.has(r.invoice_no));
+  return records.flatMap((r) => {
+    if (!existingByInvoice.has(r.invoice_no)) return [{ ...r, isNew: true, previousStatus: null }];
+    const previousStatus = existingByInvoice.get(r.invoice_no);
+    if (previousStatus !== r.status) return [{ ...r, isNew: false, previousStatus }];
+    return [];
+  });
 }
 
 /** Upserts turnover salary rows and returns any that are new months or whose net_total increased. */
