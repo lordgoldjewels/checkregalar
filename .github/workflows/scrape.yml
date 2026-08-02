@@ -27,3 +27,15 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # captureFailure() writes screenshot/DOM/aria-snapshot/error.txt to
+      # data/_failures/ on any scrape failure - Telegram only gets the
+      # screenshot, so upload the full bundle here for deeper debugging.
+      # Runs even when the scrape step fails; no-ops if nothing failed.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failure-debug-${{ github.run_id }}
+          path: data/_failures/
+          if-no-files-found: ignore
+          retention-days: 14
