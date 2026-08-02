@@ -58,6 +58,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   const runId = await startScrapeRun(phone);
   let accountsScraped = 0;
   const runErrors = [];
+  const earningUpdates = [];
 
   const { storage_state: storageState } = await getPhoneSession(phone);
   const { browser, context } = await launchContext({ headless, storageState });
@@ -133,10 +134,14 @@ for (const { phone_number: phone, status } of phoneSessions) {
       step = "db.insertDashboardSnapshot";
       await insertDashboardSnapshot(memberId, scrapedAt, dashboard);
       step = "db.upsertSalesIncentive";
-      await upsertSalesIncentive(memberId, salesIncentive);
+      const newInvoices = await upsertSalesIncentive(memberId, salesIncentive);
       step = "db.upsertTurnoverSalary";
-      await upsertTurnoverSalary(memberId, turnoverSalary);
+      const salaryChanges = await upsertTurnoverSalary(memberId, turnoverSalary);
       console.log(`     synced to Supabase`);
+
+      if (newInvoices.length > 0 || salaryChanges.length > 0) {
+        earningUpdates.push({ memberId, name, newInvoices, salaryChanges });
+      }
 
       accountsScraped++;
     } catch (err) {
@@ -165,6 +170,20 @@ for (const { phone_number: phone, status } of phoneSessions) {
       `🟠 <b>Scrape partially failed</b> for ${phone}\n` +
         `${accountsScraped}/${accounts.length} accounts succeeded.\n\n${lines}`
     );
+  }
+
+  if (earningUpdates.length > 0) {
+    const lines = earningUpdates.flatMap(({ memberId, name, newInvoices, salaryChanges }) => [
+      ...newInvoices.map(
+        (inv) => `  ${name} (${memberId}): new Sales Incentive invoice ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
+      ),
+      ...salaryChanges.map((c) =>
+        c.isNew
+          ? `  ${name} (${memberId}): new Turnover Salary for ${c.month} - ₹${c.current}`
+          : `  ${name} (${memberId}): Turnover Salary for ${c.month} increased ₹${c.previous} -> ₹${c.current}`
+      ),
+    ]);
+    await notify(`🟢 <b>New earnings detected</b> for ${phone}\n${lines.join("\n")}`);
   }
 }
 

@@ -102,8 +102,17 @@ export async function insertDashboardSnapshot(accountId, capturedAt, dashboard) 
   if (error) throw new Error(`insertDashboardSnapshot(${accountId}): ${error.message}`);
 }
 
+/** Upserts sales incentive rows and returns the ones whose invoice_no is new for this account. */
 export async function upsertSalesIncentive(accountId, rows) {
-  if (!dbEnabled || rows.length === 0) return;
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("sales_incentive")
+    .select("invoice_no")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertSalesIncentive(${accountId}) fetch: ${fetchError.message}`);
+  const existingInvoices = new Set((existing ?? []).map((r) => r.invoice_no));
+
   const records = rows.map((r) => ({
     account_id: accountId,
     bill_date: parseDdMmYyyy(r.billDate),
@@ -117,12 +126,32 @@ export async function upsertSalesIncentive(accountId, rows) {
     .from("sales_incentive")
     .upsert(records, { onConflict: "account_id,invoice_no" });
   if (error) throw new Error(`upsertSalesIncentive(${accountId}): ${error.message}`);
+
+  return records.filter((r) => !existingInvoices.has(r.invoice_no));
 }
 
+/** Upserts turnover salary rows and returns any that are new months or whose net_total increased. */
 export async function upsertTurnoverSalary(accountId, rows) {
-  if (!dbEnabled || rows.length === 0) return;
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("turnover_salary")
+    .select("month, net_total")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertTurnoverSalary(${accountId}) fetch: ${fetchError.message}`);
+  const existingByMonth = new Map((existing ?? []).map((r) => [r.month, Number(r.net_total)]));
+
+  const changes = [];
 
   for (const row of rows) {
+    const netTotal = parseAmount(row.netTotal);
+    const previous = existingByMonth.has(row.month) ? existingByMonth.get(row.month) : null;
+    if (previous === null) {
+      changes.push({ month: row.month, previous: null, current: netTotal, isNew: true });
+    } else if (netTotal != null && netTotal > previous) {
+      changes.push({ month: row.month, previous, current: netTotal, isNew: false });
+    }
+
     const { data, error } = await supabase
       .from("turnover_salary")
       .upsert(
@@ -159,6 +188,8 @@ export async function upsertTurnoverSalary(accountId, rows) {
       }
     }
   }
+
+  return changes;
 }
 
 export async function startScrapeRun(phone) {
