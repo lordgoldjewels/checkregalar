@@ -18,7 +18,7 @@ import {
   startScrapeRun,
   finishScrapeRun,
 } from "./db.mjs";
-import { notify } from "./telegram.mjs";
+import { notify, notifyPhoto } from "./telegram.mjs";
 
 if (!dbEnabled) {
   console.error("Supabase not configured - set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env");
@@ -37,6 +37,8 @@ for (const event of ["uncaughtException", "unhandledRejection"]) {
 
 const headless = process.argv.includes("--headless");
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+let hadFailure = false;
 
 const phoneSessions = await listPhoneSessions();
 
@@ -66,9 +68,18 @@ for (const { phone_number: phone, status } of phoneSessions) {
   await page.waitForLoadState("load");
   if (page.url().includes("/auth/login")) {
     console.error(`Session for ${phone} has expired. Re-run: npm run login -- ${phone}`);
+    const debugDir = await captureFailure(page, {
+      memberId: `_session_${phone}`,
+      step: "session_expired",
+      err: new Error("session expired"),
+    });
     await browser.close();
     await finishScrapeRun(runId, { status: "session_expired", accountsScraped, errors: [{ error: "session expired" }] });
-    await notify(`🔴 <b>Session expired</b> for ${phone} - run <code>npm run login -- ${phone}</code> to re-authenticate.`);
+    await notifyPhoto(
+      path.join(debugDir, "screenshot.png"),
+      `🔴 <b>Session expired</b> for ${phone} - run <code>npm run login -- ${phone}</code> to re-authenticate.`
+    );
+    hadFailure = true;
     continue;
   }
 
@@ -112,6 +123,10 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const debugDir = await captureFailure(page, { memberId, step, err });
       console.error(`     debug artifacts -> ${debugDir}`);
       runErrors.push({ memberId, step, error: err.message });
+      await notifyPhoto(
+        path.join(debugDir, "screenshot.png"),
+        `🟠 <b>Scrape failed</b> for ${memberId} (${phone}) at <code>${step}</code>\n${err.message}`
+      );
     }
   }
 
@@ -123,10 +138,16 @@ for (const { phone_number: phone, status } of phoneSessions) {
   });
 
   if (runErrors.length > 0) {
+    hadFailure = true;
     const lines = runErrors.map((e) => `  - ${e.memberId} at ${e.step}: ${e.error}`).join("\n");
     await notify(
       `🟠 <b>Scrape partially failed</b> for ${phone}\n` +
         `${accountsScraped}/${accounts.length} accounts succeeded.\n\n${lines}`
     );
   }
+}
+
+if (hadFailure) {
+  console.error("\nScrape run finished with failures - exiting non-zero.");
+  process.exit(1);
 }
