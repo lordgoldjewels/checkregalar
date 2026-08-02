@@ -63,9 +63,22 @@ for (const { phone_number: phone, status } of phoneSessions) {
   const { browser, context } = await launchContext({ headless, storageState });
   const page = await context.newPage();
 
-  await page.goto(`${BASE_URL}/app/home`);
-  await page.locator('a:has-text("Account")').last().click();
-  await page.waitForLoadState("load");
+  try {
+    await page.goto(`${BASE_URL}/app/home`, { timeout: 60000 });
+    await page.locator('a:has-text("Account")').last().click();
+    await page.waitForLoadState("load");
+  } catch (err) {
+    console.error(`     failed to open home for ${phone}:`, err.message);
+    const debugDir = await captureFailure(page, { memberId: `_nav_${phone}`, step: "goto_home", err });
+    await browser.close();
+    await finishScrapeRun(runId, { status: "error", accountsScraped, errors: [{ error: err.message }] });
+    await notifyPhoto(
+      path.join(debugDir, "screenshot.png"),
+      `🔴 <b>Scrape failed to load home</b> for ${phone}\n${err.message}`
+    );
+    hadFailure = true;
+    continue;
+  }
   if (page.url().includes("/auth/login")) {
     console.error(`Session for ${phone} has expired. Re-run: npm run login -- ${phone}`);
     const debugDir = await captureFailure(page, {
