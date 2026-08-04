@@ -7,15 +7,15 @@ import { downloadCsv } from "../lib/csv";
 
 const SI_CHARGE_RATE = 0.10; // Sales Incentive is charged 10%; net = 90% of gross.
 const PI_ACTUAL_RATE = 0.5; // Promotional Incentive pins show double the actual payout; actual = pin amount / 2.
-// Turnover Salary: actual payout is 90% of total_tb_salary above 15000, else 80% -
+// Turnover Salary: actual payout is 80% of total_tb_salary above 15000, else 90% -
 // the site's own displayed charges/net_total don't reflect this tier, so we compute
 // the real figure ourselves rather than trusting what's stored.
 const TB_SALARY_THRESHOLD = 15000;
-const TB_HIGH_RATE = 0.9;
-const TB_LOW_RATE = 0.8;
+const TB_ABOVE_THRESHOLD_RATE = 0.8;
+const TB_AT_OR_BELOW_THRESHOLD_RATE = 0.9;
 function actualTbSalary(totalTbSalary: number | null): number {
   const gross = totalTbSalary ?? 0;
-  return gross * (gross > TB_SALARY_THRESHOLD ? TB_HIGH_RATE : TB_LOW_RATE);
+  return gross * (gross > TB_SALARY_THRESHOLD ? TB_ABOVE_THRESHOLD_RATE : TB_AT_OR_BELOW_THRESHOLD_RATE);
 }
 
 interface AccountRow {
@@ -477,7 +477,7 @@ export default function Income() {
                                         <div key={r.id}>
                                           <p className="text-xs font-semibold text-maroon-900/50 uppercase tracking-wider mb-1">
                                             Turnover Salary &middot; {formatINR(r.total_tb_salary)} gross &middot; site shows {formatINR(r.net_total)} net &middot; actual {formatINR(actualTbSalary(r.total_tb_salary))}
-                                            {(r.total_tb_salary ?? 0) <= TB_SALARY_THRESHOLD && " (20% charges, below ₹15,000)"}
+                                            {(r.total_tb_salary ?? 0) > TB_SALARY_THRESHOLD && " (20% charges, above ₹15,000)"}
                                           </p>
                                           {r.breakdown.length > 0 && (
                                             <table className="w-full text-xs">
