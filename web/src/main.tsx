@@ -8,6 +8,7 @@ import Dashboard     from "./pages/Dashboard";
 import Accounts      from "./pages/Accounts";
 import AccountDetail from "./pages/AccountDetail";
 import Income        from "./pages/Income";
+import Digigold      from "./pages/Digigold";
 import ScrapeRuns    from "./pages/ScrapeRuns";
 import { supabase }  from "./lib/supabase";
 
@@ -40,6 +41,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/accounts"            element={<RequireAuth><Accounts /></RequireAuth>} />
         <Route path="/accounts/:memberId"  element={<RequireAuth><AccountDetail /></RequireAuth>} />
         <Route path="/income"              element={<RequireAuth><Income /></RequireAuth>} />
+        <Route path="/digigold"            element={<RequireAuth><Digigold /></RequireAuth>} />
         <Route path="/scrape-runs"         element={<RequireAuth><ScrapeRuns /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

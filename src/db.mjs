@@ -202,6 +202,43 @@ export async function upsertDigigoldBuy(accountId, rows) {
   return records.filter((r) => !existingOrders.has(r.order_id));
 }
 
+/**
+ * Upserts DigiGold sell transactions and returns the ones worth flagging:
+ * a brand-new transaction, or an existing one whose status changed
+ * (e.g. PENDING -> PASSED).
+ */
+export async function upsertDigigoldSell(accountId, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("digigold_sell_transactions")
+    .select("transaction_remarks, status")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertDigigoldSell(${accountId}) fetch: ${fetchError.message}`);
+  const existingByRemarks = new Map((existing ?? []).map((r) => [r.transaction_remarks, r.status]));
+
+  const records = rows.map((r) => ({
+    account_id: accountId,
+    transaction_remarks: r.transactionRemarks,
+    sell_date: parseDdMmYyyy(r.sellDate),
+    weight_gm: parseAmount(r.weightGm),
+    gold_worth: parseAmount(r.goldWorth),
+    wallet_remarks: r.walletRemarks || null,
+    status: r.status,
+  }));
+  const { error } = await supabase
+    .from("digigold_sell_transactions")
+    .upsert(records, { onConflict: "account_id,transaction_remarks" });
+  if (error) throw new Error(`upsertDigigoldSell(${accountId}): ${error.message}`);
+
+  return records.flatMap((r) => {
+    if (!existingByRemarks.has(r.transaction_remarks)) return [{ ...r, isNew: true, previousStatus: null }];
+    const previousStatus = existingByRemarks.get(r.transaction_remarks);
+    if (previousStatus !== r.status) return [{ ...r, isNew: false, previousStatus }];
+    return [];
+  });
+}
+
 /** Upserts turnover salary rows and returns any that are new months or whose net_total increased. */
 export async function upsertTurnoverSalary(accountId, rows) {
   if (!dbEnabled || rows.length === 0) return [];

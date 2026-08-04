@@ -3,11 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
 import TrendChart from "../components/TrendChart";
-import { formatINR, formatDateTime } from "../lib/format";
-
-function formatGm(value: number): string {
-  return `${value.toLocaleString("en-IN", { maximumFractionDigits: 4 })} gm`;
-}
+import { formatINR, formatDateTime, formatGm } from "../lib/format";
 
 interface AccountRow {
   member_id: string;

@@ -17,3 +17,8 @@ export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
+
+export function formatGm(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return `${value.toLocaleString("en-IN", { maximumFractionDigits: 4 })} gm`;
+}

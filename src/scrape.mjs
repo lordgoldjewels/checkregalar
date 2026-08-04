@@ -7,6 +7,7 @@ import { scrapeSalesIncentive } from "./scrapers/salesIncentive.mjs";
 import { scrapeTurnoverSalary } from "./scrapers/turnoverSalary.mjs";
 import { scrapePromotionalIncentive } from "./scrapers/promotionalIncentive.mjs";
 import { scrapeDigigoldBuy } from "./scrapers/digigoldBuy.mjs";
+import { scrapeDigigoldSell } from "./scrapers/digigoldSell.mjs";
 import { captureFailure } from "./debug.mjs";
 import {
   dbEnabled,
@@ -19,6 +20,7 @@ import {
   upsertTurnoverSalary,
   upsertPromotionalIncentivePins,
   upsertDigigoldBuy,
+  upsertDigigoldSell,
   startScrapeRun,
   finishScrapeRun,
 } from "./db.mjs";
@@ -126,6 +128,8 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const promotionalIncentive = await scrapePromotionalIncentive(page);
       step = "scrapeDigigoldBuy";
       const digigoldBuy = await scrapeDigigoldBuy(page);
+      step = "scrapeDigigoldSell";
+      const digigoldSell = await scrapeDigigoldSell(page);
 
       const scrapedAt = new Date().toISOString();
 
@@ -135,7 +139,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
       fs.writeFileSync(
         outFile,
         JSON.stringify(
-          { memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary, promotionalIncentive, digigoldBuy },
+          { memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary, promotionalIncentive, digigoldBuy, digigoldSell },
           null,
           2
         )
@@ -154,13 +158,15 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const pinChanges = await upsertPromotionalIncentivePins(memberId, promotionalIncentive);
       step = "db.upsertDigigoldBuy";
       const newDigigoldBuys = await upsertDigigoldBuy(memberId, digigoldBuy);
+      step = "db.upsertDigigoldSell";
+      const digigoldSellChanges = await upsertDigigoldSell(memberId, digigoldSell);
       console.log(`     synced to Supabase`);
 
       if (newInvoices.length > 0 || salaryChanges.length > 0 || pinChanges.length > 0) {
         earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges });
       }
-      if (newDigigoldBuys.length > 0) {
-        digigoldUpdates.push({ memberId, name, buys: newDigigoldBuys });
+      if (newDigigoldBuys.length > 0 || digigoldSellChanges.length > 0) {
+        digigoldUpdates.push({ memberId, name, buys: newDigigoldBuys, sells: digigoldSellChanges });
       }
 
       accountsScraped++;
@@ -216,12 +222,17 @@ for (const { phone_number: phone, status } of phoneSessions) {
   }
 
   if (digigoldUpdates.length > 0) {
-    const lines = digigoldUpdates.flatMap(({ memberId, name, buys }) =>
-      buys.map(
+    const lines = digigoldUpdates.flatMap(({ memberId, name, buys, sells }) => [
+      ...buys.map(
         (b) => `  ${name} (${memberId}): bought ${b.weight_gm}gm DigiGold - ₹${b.gold_worth} (${b.buy_date}, order ${b.order_id})`
-      )
-    );
-    await notify(`🟡 <b>New DigiGold purchase</b> for ${phone}\n${lines.join("\n")}`);
+      ),
+      ...sells.map((s) =>
+        s.isNew
+          ? `  ${name} (${memberId}): sold ${s.weight_gm}gm DigiGold - ₹${s.gold_worth} (${s.sell_date}, ${s.status})`
+          : `  ${name} (${memberId}): DigiGold sale ${s.transaction_remarks} status ${s.previousStatus} -> ${s.status}`
+      ),
+    ]);
+    await notify(`🟡 <b>DigiGold transaction</b> for ${phone}\n${lines.join("\n")}`);
   }
 }
 
