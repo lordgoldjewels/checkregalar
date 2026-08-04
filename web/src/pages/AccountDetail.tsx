@@ -59,6 +59,14 @@ interface PromotionalIncentivePinRow {
   status: string;
 }
 
+interface DigigoldBuyRow {
+  order_id: string;
+  buy_date: string | null;
+  weight_gm: number | null;
+  gold_worth: number | null;
+  price_on_day: number | null;
+}
+
 export default function AccountDetail() {
   const { memberId } = useParams<{ memberId: string }>();
   const [account, setAccount]   = useState<Account | null>(null);
@@ -67,6 +75,7 @@ export default function AccountDetail() {
   const [turnoverSalary, setTurnoverSalary] = useState<TurnoverSalaryRow[]>([]);
   const [breakdowns, setBreakdowns] = useState<Map<number, BreakdownRow[]>>(new Map());
   const [pins, setPins] = useState<PromotionalIncentivePinRow[]>([]);
+  const [digigoldBuys, setDigigoldBuys] = useState<DigigoldBuyRow[]>([]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
 
@@ -77,7 +86,7 @@ export default function AccountDetail() {
 
   async function fetchData(id: string) {
     setLoading(true);
-    const [accountRes, snapshotsRes, siRes, tsRes, pinsRes] = await Promise.all([
+    const [accountRes, snapshotsRes, siRes, tsRes, pinsRes, digigoldRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name, phone_number, upline_member_id").eq("member_id", id).maybeSingle(),
       supabase.from("dashboard_snapshots").select("*").eq("account_id", id).order("captured_at", { ascending: false }),
       supabase.from("sales_incentive").select("*").eq("account_id", id).order("bill_date", { ascending: false }),
@@ -87,6 +96,11 @@ export default function AccountDetail() {
         .select("code, category, dated, amount, status")
         .eq("account_id", id)
         .order("dated", { ascending: true }),
+      supabase
+        .from("digigold_buy_transactions")
+        .select("order_id, buy_date, weight_gm, gold_worth, price_on_day")
+        .eq("account_id", id)
+        .order("buy_date", { ascending: false }),
     ]);
 
     setAccount((accountRes.data as Account) ?? null);
@@ -95,6 +109,7 @@ export default function AccountDetail() {
     const tsRows = (tsRes.data as TurnoverSalaryRow[]) ?? [];
     setTurnoverSalary(tsRows);
     setPins((pinsRes.data as PromotionalIncentivePinRow[]) ?? []);
+    setDigigoldBuys((digigoldRes.data as DigigoldBuyRow[]) ?? []);
 
     if (tsRows.length > 0) {
       const { data: breakdownData } = await supabase
@@ -150,6 +165,14 @@ export default function AccountDetail() {
       `promotional-incentive-${memberId}.csv`,
       ["Code", "Category", "Dated", "Amount", "Status"],
       pins.map((r) => [r.code, r.category, formatDate(r.dated), r.amount, r.status])
+    );
+  }
+
+  function exportDigigoldBuyCsv() {
+    downloadCsv(
+      `digigold-buy-${memberId}.csv`,
+      ["Buy Date", "Weight (gm)", "Gold Worth", "Price on Day", "Order ID"],
+      digigoldBuys.map((r) => [formatDate(r.buy_date), r.weight_gm, r.gold_worth, r.price_on_day, r.order_id])
     );
   }
 
@@ -358,6 +381,44 @@ export default function AccountDetail() {
               ))}
               {pins.length === 0 && (
                 <tr><td colSpan={5} className="px-4 py-6 text-center text-maroon-900/40">No promotional incentive pins.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* DigiGold Buy History */}
+        <div className="flex items-center justify-between mb-3 mt-8">
+          <h2 className="text-lg font-semibold text-maroon-900">DigiGold Buy History</h2>
+          <button
+            onClick={exportDigigoldBuyCsv}
+            className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+          >
+            Export CSV
+          </button>
+        </div>
+        <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-maroon-50 text-left text-xs font-semibold text-maroon-900/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5">Buy Date</th>
+                <th className="px-4 py-2.5">Weight (gm)</th>
+                <th className="px-4 py-2.5">Gold Worth</th>
+                <th className="px-4 py-2.5">Price on Day</th>
+                <th className="px-4 py-2.5">Order ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-maroon-50">
+              {digigoldBuys.map((r) => (
+                <tr key={r.order_id} className="hover:bg-maroon-50/50">
+                  <td className="px-4 py-2.5">{formatDate(r.buy_date)}</td>
+                  <td className="px-4 py-2.5">{r.weight_gm}</td>
+                  <td className="px-4 py-2.5">{formatINR(r.gold_worth)}</td>
+                  <td className="px-4 py-2.5">{formatINR(r.price_on_day)}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs">{r.order_id}</td>
+                </tr>
+              ))}
+              {digigoldBuys.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-maroon-900/40">No DigiGold purchases.</td></tr>
               )}
             </tbody>
           </table>

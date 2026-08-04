@@ -5,6 +5,10 @@ import Layout from "../components/Layout";
 import TrendChart from "../components/TrendChart";
 import { formatINR, formatDateTime } from "../lib/format";
 
+function formatGm(value: number): string {
+  return `${value.toLocaleString("en-IN", { maximumFractionDigits: 4 })} gm`;
+}
+
 interface AccountRow {
   member_id: string;
   name: string;
@@ -32,6 +36,7 @@ export default function Dashboard() {
   const [accounts, setAccounts]   = useState<AccountRow[]>([]);
   const [latest, setLatest]       = useState<Map<string, SnapshotRow>>(new Map());
   const [runs, setRuns]           = useState<RunRow[]>([]);
+  const [digigold, setDigigold]   = useState<{ weightGm: number; worth: number }>({ weightGm: 0, worth: 0 });
   const [loading, setLoading]     = useState(true);
 
   useEffect(() => {
@@ -41,7 +46,7 @@ export default function Dashboard() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, snapshotsRes, runsRes] = await Promise.all([
+    const [accountsRes, snapshotsRes, runsRes, digigoldRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name, phone_number").order("name"),
       supabase
         .from("dashboard_snapshots")
@@ -52,6 +57,7 @@ export default function Dashboard() {
         .select("id, phone_number, started_at, finished_at, status, accounts_scraped")
         .order("started_at", { ascending: false })
         .limit(10),
+      supabase.from("digigold_buy_transactions").select("weight_gm, gold_worth"),
     ]);
 
     const latestMap = new Map<string, SnapshotRow>();
@@ -59,9 +65,15 @@ export default function Dashboard() {
       if (!latestMap.has(row.account_id)) latestMap.set(row.account_id, row);
     }
 
+    const digigoldTotals = ((digigoldRes.data as { weight_gm: number | null; gold_worth: number | null }[]) ?? []).reduce(
+      (acc, r) => ({ weightGm: acc.weightGm + (r.weight_gm ?? 0), worth: acc.worth + (r.gold_worth ?? 0) }),
+      { weightGm: 0, worth: 0 }
+    );
+
     setAccounts((accountsRes.data as AccountRow[]) ?? []);
     setLatest(latestMap);
     setRuns((runsRes.data as RunRow[]) ?? []);
+    setDigigold(digigoldTotals);
     setLoading(false);
   }
 
@@ -83,6 +95,7 @@ export default function Dashboard() {
     { label: "Total Business", value: formatINR(totals.business),      sub: "latest snapshots" },
     { label: "Total Earning",  value: formatINR(totals.earning),       sub: "latest snapshots" },
     { label: "Total Withdraw", value: formatINR(totals.withdraw),      sub: "latest snapshots" },
+    { label: "DigiGold Bought", value: formatGm(digigold.weightGm),    sub: `worth ${formatINR(digigold.worth)}` },
     {
       label: "Last Run",
       value: lastRun ? lastRun.status : "—",
@@ -99,7 +112,7 @@ export default function Dashboard() {
           <p className="text-sm text-maroon-900/50 mt-0.5">Overview across all tracked accounts</p>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
           {stats.map((s) => (
             <div key={s.label} className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
               <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">{s.label}</p>
