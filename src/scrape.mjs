@@ -6,6 +6,7 @@ import { scrapeDashboard } from "./scrapers/dashboard.mjs";
 import { scrapeSalesIncentive } from "./scrapers/salesIncentive.mjs";
 import { scrapeTurnoverSalary } from "./scrapers/turnoverSalary.mjs";
 import { scrapePromotionalIncentive } from "./scrapers/promotionalIncentive.mjs";
+import { scrapeDigigoldBuy } from "./scrapers/digigoldBuy.mjs";
 import { captureFailure } from "./debug.mjs";
 import {
   dbEnabled,
@@ -17,6 +18,7 @@ import {
   upsertSalesIncentive,
   upsertTurnoverSalary,
   upsertPromotionalIncentivePins,
+  upsertDigigoldBuy,
   startScrapeRun,
   finishScrapeRun,
 } from "./db.mjs";
@@ -61,6 +63,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   let accountsScraped = 0;
   const runErrors = [];
   const earningUpdates = [];
+  const digigoldUpdates = [];
 
   const { storage_state: storageState } = await getPhoneSession(phone);
   const { browser, context } = await launchContext({ headless, storageState });
@@ -121,6 +124,8 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const turnoverSalary = await scrapeTurnoverSalary(page);
       step = "scrapePromotionalIncentive";
       const promotionalIncentive = await scrapePromotionalIncentive(page);
+      step = "scrapeDigigoldBuy";
+      const digigoldBuy = await scrapeDigigoldBuy(page);
 
       const scrapedAt = new Date().toISOString();
 
@@ -130,7 +135,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
       fs.writeFileSync(
         outFile,
         JSON.stringify(
-          { memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary, promotionalIncentive },
+          { memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary, promotionalIncentive, digigoldBuy },
           null,
           2
         )
@@ -147,10 +152,15 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const salaryChanges = await upsertTurnoverSalary(memberId, turnoverSalary);
       step = "db.upsertPromotionalIncentivePins";
       const pinChanges = await upsertPromotionalIncentivePins(memberId, promotionalIncentive);
+      step = "db.upsertDigigoldBuy";
+      const newDigigoldBuys = await upsertDigigoldBuy(memberId, digigoldBuy);
       console.log(`     synced to Supabase`);
 
       if (newInvoices.length > 0 || salaryChanges.length > 0 || pinChanges.length > 0) {
         earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges });
+      }
+      if (newDigigoldBuys.length > 0) {
+        digigoldUpdates.push({ memberId, name, buys: newDigigoldBuys });
       }
 
       accountsScraped++;
@@ -203,6 +213,15 @@ for (const { phone_number: phone, status } of phoneSessions) {
       ),
     ]);
     await notify(`🟢 <b>New earnings detected</b> for ${phone}\n${lines.join("\n")}`);
+  }
+
+  if (digigoldUpdates.length > 0) {
+    const lines = digigoldUpdates.flatMap(({ memberId, name, buys }) =>
+      buys.map(
+        (b) => `  ${name} (${memberId}): bought ${b.weight_gm}gm DigiGold - ₹${b.gold_worth} (${b.buy_date}, order ${b.order_id})`
+      )
+    );
+    await notify(`🟡 <b>New DigiGold purchase</b> for ${phone}\n${lines.join("\n")}`);
   }
 }
 

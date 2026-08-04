@@ -175,6 +175,33 @@ export async function upsertPromotionalIncentivePins(accountId, rows) {
   });
 }
 
+/** Upserts DigiGold buy transactions and returns the ones whose order_id is new for this account. */
+export async function upsertDigigoldBuy(accountId, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("digigold_buy_transactions")
+    .select("order_id")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertDigigoldBuy(${accountId}) fetch: ${fetchError.message}`);
+  const existingOrders = new Set((existing ?? []).map((r) => r.order_id));
+
+  const records = rows.map((r) => ({
+    account_id: accountId,
+    order_id: r.orderId,
+    buy_date: parseDdMmYyyy(r.buyDate),
+    weight_gm: parseAmount(r.weightGm),
+    gold_worth: parseAmount(r.goldWorth),
+    price_on_day: parseAmount(r.priceOnDay),
+  }));
+  const { error } = await supabase
+    .from("digigold_buy_transactions")
+    .upsert(records, { onConflict: "account_id,order_id" });
+  if (error) throw new Error(`upsertDigigoldBuy(${accountId}): ${error.message}`);
+
+  return records.filter((r) => !existingOrders.has(r.order_id));
+}
+
 /** Upserts turnover salary rows and returns any that are new months or whose net_total increased. */
 export async function upsertTurnoverSalary(accountId, rows) {
   if (!dbEnabled || rows.length === 0) return [];
