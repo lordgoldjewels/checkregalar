@@ -15,6 +15,7 @@ interface AccountRow {
 interface IncomeTotals {
   salesIncentiveGross: number;
   turnoverSalary: number;
+  promotionalIncentive: number;
 }
 
 interface SalesIncentiveDetail {
@@ -35,6 +36,14 @@ interface TurnoverSalaryDetail {
   breakdown: { from_distributor: string | null; distributor_id: string | null; tbp_salary: number | null }[];
 }
 
+interface PromotionalIncentiveDetail {
+  code: string;
+  category: string | null;
+  dated: string | null;
+  amount: number | null;
+  status: string;
+}
+
 function monthLabel(yyyyMm: string): string {
   const [year, month] = yyyyMm.split("-");
   return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("en-IN", {
@@ -50,11 +59,11 @@ function monthAccountKey(monthKey: string, accountId: string) {
 export default function Income() {
   const [accounts, setAccounts]           = useState<AccountRow[]>([]);
   const [totals, setTotals]               = useState<Map<string, IncomeTotals>>(new Map());
-  const [promoIncentive, setPromoIncentive] = useState<Map<string, number>>(new Map());
   const [monthlyTotals, setMonthlyTotals] = useState<Map<string, IncomeTotals>>(new Map());
   const [monthlyByAccount, setMonthlyByAccount] = useState<Map<string, Map<string, IncomeTotals>>>(new Map());
   const [siDetails, setSiDetails] = useState<Map<string, SalesIncentiveDetail[]>>(new Map());
   const [tsDetails, setTsDetails] = useState<Map<string, TurnoverSalaryDetail[]>>(new Map());
+  const [piDetails, setPiDetails] = useState<Map<string, PromotionalIncentiveDetail[]>>(new Map());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [expandedAccountMonths, setExpandedAccountMonths] = useState<Set<string>>(new Set());
   const [loading, setLoading]             = useState(true);
@@ -82,27 +91,17 @@ export default function Income() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, siRes, tsRes, snapshotsRes] = await Promise.all([
+    const [accountsRes, siRes, tsRes, piRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name").order("name"),
       supabase
         .from("sales_incentive")
         .select("account_id, si_value, bill_date, invoice_no, from_distributor, status, pay_via"),
       supabase.from("turnover_salary").select("id, account_id, net_total, month, no_of_packets, total_tb_salary, charges"),
       supabase
-        .from("dashboard_snapshots")
-        .select("account_id, my_promotional_incentive, captured_at")
-        .order("captured_at", { ascending: false }),
+        .from("promotional_incentive_pins")
+        .select("account_id, code, category, dated, amount, status")
+        .eq("status", "closed"),
     ]);
-
-    // Promotional Incentive is a running balance reported by the site, not a
-    // per-transaction record - use each account's most recent snapshot value
-    // rather than summing across snapshots (which would double-count).
-    const promoByAccount = new Map<string, number>();
-    for (const row of (snapshotsRes.data as { account_id: string; my_promotional_incentive: number | null }[]) ?? []) {
-      if (!promoByAccount.has(row.account_id)) {
-        promoByAccount.set(row.account_id, row.my_promotional_incentive ?? 0);
-      }
-    }
 
     const tsRows = (tsRes.data as (TurnoverSalaryDetail & { id: number; account_id: string; month: string })[]) ?? [];
     const breakdownRes = tsRows.length
@@ -120,13 +119,13 @@ export default function Income() {
 
     const byAccount = new Map<string, IncomeTotals>();
     const ensureAccount = (id: string) => {
-      if (!byAccount.has(id)) byAccount.set(id, { salesIncentiveGross: 0, turnoverSalary: 0 });
+      if (!byAccount.has(id)) byAccount.set(id, { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 });
       return byAccount.get(id)!;
     };
 
     const byMonth = new Map<string, IncomeTotals>();
     const ensureMonth = (key: string) => {
-      if (!byMonth.has(key)) byMonth.set(key, { salesIncentiveGross: 0, turnoverSalary: 0 });
+      if (!byMonth.has(key)) byMonth.set(key, { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 });
       return byMonth.get(key)!;
     };
 
@@ -134,12 +133,13 @@ export default function Income() {
     const ensureMonthAccount = (monthKey: string, accountId: string) => {
       if (!byMonthByAccount.has(monthKey)) byMonthByAccount.set(monthKey, new Map());
       const accMap = byMonthByAccount.get(monthKey)!;
-      if (!accMap.has(accountId)) accMap.set(accountId, { salesIncentiveGross: 0, turnoverSalary: 0 });
+      if (!accMap.has(accountId)) accMap.set(accountId, { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 });
       return accMap.get(accountId)!;
     };
 
     const siByMonthAccount = new Map<string, SalesIncentiveDetail[]>();
     const tsByMonthAccount = new Map<string, TurnoverSalaryDetail[]>();
+    const piByMonthAccount = new Map<string, PromotionalIncentiveDetail[]>();
 
     for (const row of (siRes.data as (SalesIncentiveDetail & { account_id: string })[]) ?? []) {
       ensureAccount(row.account_id).salesIncentiveGross += row.si_value ?? 0;
@@ -169,14 +169,27 @@ export default function Income() {
         tsByMonthAccount.set(key, list);
       }
     }
+    for (const row of (piRes.data as (PromotionalIncentiveDetail & { account_id: string })[]) ?? []) {
+      ensureAccount(row.account_id).promotionalIncentive += row.amount ?? 0;
+      if (row.dated) {
+        const monthKey = row.dated.slice(0, 7);
+        ensureMonth(monthKey).promotionalIncentive += row.amount ?? 0;
+        ensureMonthAccount(monthKey, row.account_id).promotionalIncentive += row.amount ?? 0;
+
+        const key = monthAccountKey(monthKey, row.account_id);
+        const list = piByMonthAccount.get(key) ?? [];
+        list.push(row);
+        piByMonthAccount.set(key, list);
+      }
+    }
 
     setAccounts((accountsRes.data as AccountRow[]) ?? []);
     setTotals(byAccount);
-    setPromoIncentive(promoByAccount);
     setMonthlyTotals(byMonth);
     setMonthlyByAccount(byMonthByAccount);
     setSiDetails(siByMonthAccount);
     setTsDetails(tsByMonthAccount);
+    setPiDetails(piByMonthAccount);
     setLoading(false);
   }
 
@@ -185,7 +198,7 @@ export default function Income() {
   const grandSalesIncentiveGross = [...totals.values()].reduce((s, t) => s + t.salesIncentiveGross, 0);
   const grandSalesIncentiveNet   = grandSalesIncentiveGross * (1 - SI_CHARGE_RATE);
   const grandTurnoverSalary      = [...totals.values()].reduce((s, t) => s + t.turnoverSalary, 0);
-  const grandPromoIncentive      = [...promoIncentive.values()].reduce((s, v) => s + v, 0);
+  const grandPromoIncentive      = [...totals.values()].reduce((s, t) => s + t.promotionalIncentive, 0);
   const grandTotal               = grandSalesIncentiveNet + grandTurnoverSalary + grandPromoIncentive;
 
   const monthKeys = [...monthlyTotals.keys()].sort().reverse();
@@ -193,12 +206,11 @@ export default function Income() {
   function exportByAccountCsv() {
     downloadCsv(
       "income-by-account.csv",
-      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive", "Total (Net)"],
+      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Redeemed)", "Total (Net)"],
       accounts.map((a) => {
-        const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0 };
+        const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 };
         const net = netOf(t);
-        const promo = promoIncentive.get(a.member_id) ?? 0;
-        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalary, promo, net + t.turnoverSalary + promo];
+        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalary, t.promotionalIncentive, net + t.turnoverSalary + t.promotionalIncentive];
       })
     );
   }
@@ -206,11 +218,11 @@ export default function Income() {
   function exportByMonthCsv() {
     downloadCsv(
       "income-by-month.csv",
-      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Total (Net)"],
+      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Redeemed)", "Total (Net)"],
       monthKeys.map((key) => {
         const t = monthlyTotals.get(key)!;
         const net = netOf(t);
-        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalary, net + t.turnoverSalary];
+        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalary, t.promotionalIncentive, net + t.turnoverSalary + t.promotionalIncentive];
       })
     );
   }
@@ -237,7 +249,7 @@ export default function Income() {
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Promotional Incentive</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandPromoIncentive)}</p>
-            <p className="text-xs text-maroon-900/40 mt-1">latest balance, all accounts</p>
+            <p className="text-xs text-maroon-900/40 mt-1">redeemed pins, all accounts</p>
           </div>
           <div className="bg-gold-500 rounded-xl shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/60 uppercase tracking-wider">Total Income (Net)</p>
@@ -275,9 +287,8 @@ export default function Income() {
                 </thead>
                 <tbody className="divide-y divide-maroon-50">
                   {accounts.map((a) => {
-                    const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0 };
+                    const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 };
                     const net = netOf(t);
-                    const promo = promoIncentive.get(a.member_id) ?? 0;
                     return (
                       <tr key={a.member_id} className="hover:bg-maroon-50/50">
                         <td className="px-5 py-3">
@@ -288,8 +299,8 @@ export default function Income() {
                         <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                         <td className="px-5 py-3">{formatINR(net)}</td>
                         <td className="px-5 py-3">{formatINR(t.turnoverSalary)}</td>
-                        <td className="px-5 py-3">{formatINR(promo)}</td>
-                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + promo)}</td>
+                        <td className="px-5 py-3">{formatINR(t.promotionalIncentive)}</td>
+                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + t.promotionalIncentive)}</td>
                       </tr>
                     );
                   })}
@@ -326,7 +337,7 @@ export default function Income() {
               </button>
             </div>
             <p className="text-xs text-maroon-900/40 mb-3">
-              Promotional Incentive isn't included here &mdash; it's a running balance, not attributable to a specific month.
+              Promotional Incentive is attributed to the month a pin's redemption date falls in.
             </p>
             <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
               <table className="w-full text-sm">
@@ -336,6 +347,7 @@ export default function Income() {
                     <th className="px-5 py-3">Sales Incentive (Gross)</th>
                     <th className="px-5 py-3">Sales Incentive (Net)</th>
                     <th className="px-5 py-3">Turnover Salary</th>
+                    <th className="px-5 py-3">Promotional Incentive</th>
                     <th className="px-5 py-3">Total (Net)</th>
                     <th className="px-5 py-3" />
                   </tr>
@@ -345,7 +357,9 @@ export default function Income() {
                     const t = monthlyTotals.get(key)!;
                     const net = netOf(t);
                     const accountBreakdown = [...(monthlyByAccount.get(key) ?? new Map())].sort(
-                      (a, b) => netOf(b[1]) + b[1].turnoverSalary - (netOf(a[1]) + a[1].turnoverSalary)
+                      (a, b) =>
+                        netOf(b[1]) + b[1].turnoverSalary + b[1].promotionalIncentive -
+                        (netOf(a[1]) + a[1].turnoverSalary + a[1].promotionalIncentive)
                     );
                     return (
                       <Fragment key={key}>
@@ -354,7 +368,8 @@ export default function Income() {
                           <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                           <td className="px-5 py-3">{formatINR(net)}</td>
                           <td className="px-5 py-3">{formatINR(t.turnoverSalary)}</td>
-                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary)}</td>
+                          <td className="px-5 py-3">{formatINR(t.promotionalIncentive)}</td>
+                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + t.promotionalIncentive)}</td>
                           <td className="px-5 py-3 text-right">
                             <button
                               onClick={() => toggleMonth(key)}
@@ -370,6 +385,7 @@ export default function Income() {
                             const accountName = accounts.find((a) => a.member_id === accountId)?.name ?? accountId;
                             const si = siDetails.get(amKey) ?? [];
                             const ts = tsDetails.get(amKey) ?? [];
+                            const pi = piDetails.get(amKey) ?? [];
                             return (
                               <Fragment key={amKey}>
                                 <tr className="bg-maroon-50/40">
@@ -381,7 +397,8 @@ export default function Income() {
                                   <td className="px-4 py-2 text-sm text-maroon-900/50">{formatINR(at.salesIncentiveGross)}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(netOf(at))}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(at.turnoverSalary)}</td>
-                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalary)}</td>
+                                  <td className="px-4 py-2 text-sm">{formatINR(at.promotionalIncentive)}</td>
+                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalary + at.promotionalIncentive)}</td>
                                   <td className="px-4 py-2 text-right">
                                     <button
                                       onClick={() => toggleAccountMonth(amKey)}
@@ -393,7 +410,7 @@ export default function Income() {
                                 </tr>
                                 {expandedAccountMonths.has(amKey) && (
                                   <tr>
-                                    <td colSpan={6} className="px-4 py-3 bg-maroon-100/40">
+                                    <td colSpan={7} className="px-4 py-3 bg-maroon-100/40">
                                       {si.length > 0 && (
                                         <div className="mb-3">
                                           <p className="text-xs font-semibold text-maroon-900/50 uppercase tracking-wider mb-1">
@@ -452,7 +469,34 @@ export default function Income() {
                                           )}
                                         </div>
                                       ))}
-                                      {si.length === 0 && ts.length === 0 && (
+                                      {pi.length > 0 && (
+                                        <div className="mb-3">
+                                          <p className="text-xs font-semibold text-maroon-900/50 uppercase tracking-wider mb-1">
+                                            Promotional Incentive
+                                          </p>
+                                          <table className="w-full text-xs">
+                                            <thead>
+                                              <tr className="text-left text-maroon-900/50">
+                                                <th className="py-1 pr-4">Code</th>
+                                                <th className="py-1 pr-4">Category</th>
+                                                <th className="py-1 pr-4">Dated</th>
+                                                <th className="py-1 pr-4">Amount</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {pi.map((r) => (
+                                                <tr key={r.code}>
+                                                  <td className="py-1 pr-4 font-mono">{r.code}</td>
+                                                  <td className="py-1 pr-4">{r.category}</td>
+                                                  <td className="py-1 pr-4">{formatDate(r.dated)}</td>
+                                                  <td className="py-1 pr-4">{formatINR(r.amount)}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                      {si.length === 0 && ts.length === 0 && pi.length === 0 && (
                                         <p className="text-xs text-maroon-900/40">No detail records.</p>
                                       )}
                                     </td>
@@ -466,7 +510,7 @@ export default function Income() {
                   })}
                   {monthKeys.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-5 py-8 text-center text-maroon-900/40">
+                      <td colSpan={7} className="px-5 py-8 text-center text-maroon-900/40">
                         No income data yet.
                       </td>
                     </tr>

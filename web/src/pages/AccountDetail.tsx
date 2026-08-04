@@ -51,6 +51,14 @@ interface BreakdownRow {
   tbp_salary: number | null;
 }
 
+interface PromotionalIncentivePinRow {
+  code: string;
+  category: string | null;
+  dated: string | null;
+  amount: number | null;
+  status: string;
+}
+
 export default function AccountDetail() {
   const { memberId } = useParams<{ memberId: string }>();
   const [account, setAccount]   = useState<Account | null>(null);
@@ -58,6 +66,7 @@ export default function AccountDetail() {
   const [salesIncentive, setSalesIncentive] = useState<SalesIncentiveRow[]>([]);
   const [turnoverSalary, setTurnoverSalary] = useState<TurnoverSalaryRow[]>([]);
   const [breakdowns, setBreakdowns] = useState<Map<number, BreakdownRow[]>>(new Map());
+  const [pins, setPins] = useState<PromotionalIncentivePinRow[]>([]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
 
@@ -68,11 +77,16 @@ export default function AccountDetail() {
 
   async function fetchData(id: string) {
     setLoading(true);
-    const [accountRes, snapshotsRes, siRes, tsRes] = await Promise.all([
+    const [accountRes, snapshotsRes, siRes, tsRes, pinsRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name, phone_number, upline_member_id").eq("member_id", id).maybeSingle(),
       supabase.from("dashboard_snapshots").select("*").eq("account_id", id).order("captured_at", { ascending: false }),
       supabase.from("sales_incentive").select("*").eq("account_id", id).order("bill_date", { ascending: false }),
       supabase.from("turnover_salary").select("*").eq("account_id", id).order("month", { ascending: false }),
+      supabase
+        .from("promotional_incentive_pins")
+        .select("code, category, dated, amount, status")
+        .eq("account_id", id)
+        .order("dated", { ascending: true }),
     ]);
 
     setAccount((accountRes.data as Account) ?? null);
@@ -80,6 +94,7 @@ export default function AccountDetail() {
     setSalesIncentive((siRes.data as SalesIncentiveRow[]) ?? []);
     const tsRows = (tsRes.data as TurnoverSalaryRow[]) ?? [];
     setTurnoverSalary(tsRows);
+    setPins((pinsRes.data as PromotionalIncentivePinRow[]) ?? []);
 
     if (tsRows.length > 0) {
       const { data: breakdownData } = await supabase
@@ -108,6 +123,12 @@ export default function AccountDetail() {
 
   const latest = snapshots[0];
 
+  const pinStatusStyle: Record<string, string> = {
+    closed: "bg-green-100 text-green-700",
+    active: "bg-blue-100 text-blue-700",
+    pending: "bg-amber-100 text-amber-700",
+  };
+
   function exportSalesIncentiveCsv() {
     downloadCsv(
       `sales-incentive-${memberId}.csv`,
@@ -121,6 +142,14 @@ export default function AccountDetail() {
       `turnover-salary-${memberId}.csv`,
       ["Month", "Packets", "Total TB Salary", "Charges", "Net Total"],
       turnoverSalary.map((r) => [r.month, r.no_of_packets, r.total_tb_salary, r.charges, r.net_total])
+    );
+  }
+
+  function exportPromotionalIncentiveCsv() {
+    downloadCsv(
+      `promotional-incentive-${memberId}.csv`,
+      ["Code", "Category", "Dated", "Amount", "Status"],
+      pins.map((r) => [r.code, r.category, formatDate(r.dated), r.amount, r.status])
     );
   }
 
@@ -287,6 +316,48 @@ export default function AccountDetail() {
               ))}
               {turnoverSalary.length === 0 && (
                 <tr><td colSpan={6} className="px-4 py-6 text-center text-maroon-900/40">No turnover salary records.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Promotional Incentive */}
+        <div className="flex items-center justify-between mb-3 mt-8">
+          <h2 className="text-lg font-semibold text-maroon-900">Promotional Incentive</h2>
+          <button
+            onClick={exportPromotionalIncentiveCsv}
+            className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+          >
+            Export CSV
+          </button>
+        </div>
+        <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-maroon-50 text-left text-xs font-semibold text-maroon-900/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5">Code</th>
+                <th className="px-4 py-2.5">Category</th>
+                <th className="px-4 py-2.5">Dated</th>
+                <th className="px-4 py-2.5">Amount</th>
+                <th className="px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-maroon-50">
+              {pins.map((p) => (
+                <tr key={p.code} className="hover:bg-maroon-50/50">
+                  <td className="px-4 py-2.5 font-mono text-xs">{p.code}</td>
+                  <td className="px-4 py-2.5">{p.category}</td>
+                  <td className="px-4 py-2.5">{formatDate(p.dated)}</td>
+                  <td className="px-4 py-2.5">{formatINR(p.amount)}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${pinStatusStyle[p.status] ?? "bg-maroon-100 text-maroon-700"}`}>
+                      {p.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {pins.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-maroon-900/40">No promotional incentive pins.</td></tr>
               )}
             </tbody>
           </table>
