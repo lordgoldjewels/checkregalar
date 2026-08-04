@@ -5,6 +5,7 @@ import { switchToAccount } from "./changeProfile.mjs";
 import { scrapeDashboard } from "./scrapers/dashboard.mjs";
 import { scrapeSalesIncentive } from "./scrapers/salesIncentive.mjs";
 import { scrapeTurnoverSalary } from "./scrapers/turnoverSalary.mjs";
+import { scrapePromotionalIncentive } from "./scrapers/promotionalIncentive.mjs";
 import { captureFailure } from "./debug.mjs";
 import {
   dbEnabled,
@@ -15,6 +16,7 @@ import {
   insertDashboardSnapshot,
   upsertSalesIncentive,
   upsertTurnoverSalary,
+  upsertPromotionalIncentivePins,
   startScrapeRun,
   finishScrapeRun,
 } from "./db.mjs";
@@ -117,6 +119,8 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const salesIncentive = await scrapeSalesIncentive(page);
       step = "scrapeTurnoverSalary";
       const turnoverSalary = await scrapeTurnoverSalary(page);
+      step = "scrapePromotionalIncentive";
+      const promotionalIncentive = await scrapePromotionalIncentive(page);
 
       const scrapedAt = new Date().toISOString();
 
@@ -125,7 +129,11 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const outFile = path.join(outDir, `${timestamp}.json`);
       fs.writeFileSync(
         outFile,
-        JSON.stringify({ memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary }, null, 2)
+        JSON.stringify(
+          { memberId, name, phone, scrapedAt, dashboard, salesIncentive, turnoverSalary, promotionalIncentive },
+          null,
+          2
+        )
       );
       console.log(`     saved -> ${outFile}`);
 
@@ -137,10 +145,12 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const newInvoices = await upsertSalesIncentive(memberId, salesIncentive);
       step = "db.upsertTurnoverSalary";
       const salaryChanges = await upsertTurnoverSalary(memberId, turnoverSalary);
+      step = "db.upsertPromotionalIncentivePins";
+      const pinChanges = await upsertPromotionalIncentivePins(memberId, promotionalIncentive);
       console.log(`     synced to Supabase`);
 
-      if (newInvoices.length > 0 || salaryChanges.length > 0) {
-        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges });
+      if (newInvoices.length > 0 || salaryChanges.length > 0 || pinChanges.length > 0) {
+        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges });
       }
 
       accountsScraped++;
@@ -173,7 +183,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   }
 
   if (earningUpdates.length > 0) {
-    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges }) => [
+    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges }) => [
       ...invoiceChanges.map((inv) =>
         inv.isNew
           ? `  ${name} (${memberId}): new Sales Incentive invoice ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
@@ -183,6 +193,13 @@ for (const { phone_number: phone, status } of phoneSessions) {
         c.isNew
           ? `  ${name} (${memberId}): new Turnover Salary for ${c.month} - ₹${c.current}`
           : `  ${name} (${memberId}): Turnover Salary for ${c.month} increased ₹${c.previous} -> ₹${c.current}`
+      ),
+      ...pinChanges.map((p) =>
+        p.isNew
+          ? `  ${name} (${memberId}): new Promotional Incentive pin ${p.code} - ₹${p.amount} (${p.dated}, ${p.status})`
+          : p.status === "closed"
+          ? `  ${name} (${memberId}): Promotional Incentive pin ${p.code} REDEEMED - ₹${p.amount} (${p.dated})`
+          : `  ${name} (${memberId}): Promotional Incentive pin ${p.code} status ${p.previousStatus} -> ${p.status} (₹${p.amount})`
       ),
     ]);
     await notify(`🟢 <b>New earnings detected</b> for ${phone}\n${lines.join("\n")}`);

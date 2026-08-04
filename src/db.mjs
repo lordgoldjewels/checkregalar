@@ -139,6 +139,42 @@ export async function upsertSalesIncentive(accountId, rows) {
   });
 }
 
+/**
+ * Upserts promotional incentive pins and returns the ones worth flagging:
+ * a brand-new pin, or an existing one whose status changed - most notably
+ * active/pending -> closed, which means it was just redeemed.
+ */
+export async function upsertPromotionalIncentivePins(accountId, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("promotional_incentive_pins")
+    .select("code, status")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertPromotionalIncentivePins(${accountId}) fetch: ${fetchError.message}`);
+  const existingByCode = new Map((existing ?? []).map((r) => [r.code, r.status]));
+
+  const records = rows.map((r) => ({
+    account_id: accountId,
+    code: r.code,
+    category: r.category,
+    dated: parseDdMmYyyy(r.dated),
+    amount: parseAmount(r.amount),
+    status: r.status,
+  }));
+  const { error } = await supabase
+    .from("promotional_incentive_pins")
+    .upsert(records, { onConflict: "account_id,code" });
+  if (error) throw new Error(`upsertPromotionalIncentivePins(${accountId}): ${error.message}`);
+
+  return records.flatMap((r) => {
+    if (!existingByCode.has(r.code)) return [{ ...r, isNew: true, previousStatus: null }];
+    const previousStatus = existingByCode.get(r.code);
+    if (previousStatus !== r.status) return [{ ...r, isNew: false, previousStatus }];
+    return [];
+  });
+}
+
 /** Upserts turnover salary rows and returns any that are new months or whose net_total increased. */
 export async function upsertTurnoverSalary(accountId, rows) {
   if (!dbEnabled || rows.length === 0) return [];
