@@ -6,6 +6,7 @@ import { formatINR, formatDate } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 
 const SI_CHARGE_RATE = 0.10; // Sales Incentive is charged 10%; net = 90% of gross.
+const PI_ACTUAL_RATE = 0.5; // Promotional Incentive pins show double the actual payout; actual = pin amount / 2.
 
 interface AccountRow {
   member_id: string;
@@ -194,11 +195,13 @@ export default function Income() {
   }
 
   const netOf = (t: IncomeTotals) => t.salesIncentiveGross * (1 - SI_CHARGE_RATE);
+  const promoActualOf = (t: IncomeTotals) => t.promotionalIncentive * PI_ACTUAL_RATE;
 
   const grandSalesIncentiveGross = [...totals.values()].reduce((s, t) => s + t.salesIncentiveGross, 0);
   const grandSalesIncentiveNet   = grandSalesIncentiveGross * (1 - SI_CHARGE_RATE);
   const grandTurnoverSalary      = [...totals.values()].reduce((s, t) => s + t.turnoverSalary, 0);
-  const grandPromoIncentive      = [...totals.values()].reduce((s, t) => s + t.promotionalIncentive, 0);
+  const grandPromoIncentiveGross = [...totals.values()].reduce((s, t) => s + t.promotionalIncentive, 0);
+  const grandPromoIncentive      = grandPromoIncentiveGross * PI_ACTUAL_RATE;
   const grandTotal               = grandSalesIncentiveNet + grandTurnoverSalary + grandPromoIncentive;
 
   const monthKeys = [...monthlyTotals.keys()].sort().reverse();
@@ -206,11 +209,12 @@ export default function Income() {
   function exportByAccountCsv() {
     downloadCsv(
       "income-by-account.csv",
-      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Redeemed)", "Total (Net)"],
+      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Actual)", "Total (Net)"],
       accounts.map((a) => {
         const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 };
         const net = netOf(t);
-        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalary, t.promotionalIncentive, net + t.turnoverSalary + t.promotionalIncentive];
+        const promo = promoActualOf(t);
+        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalary, promo, net + t.turnoverSalary + promo];
       })
     );
   }
@@ -218,11 +222,12 @@ export default function Income() {
   function exportByMonthCsv() {
     downloadCsv(
       "income-by-month.csv",
-      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Redeemed)", "Total (Net)"],
+      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary", "Promotional Incentive (Actual)", "Total (Net)"],
       monthKeys.map((key) => {
         const t = monthlyTotals.get(key)!;
         const net = netOf(t);
-        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalary, t.promotionalIncentive, net + t.turnoverSalary + t.promotionalIncentive];
+        const promo = promoActualOf(t);
+        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalary, promo, net + t.turnoverSalary + promo];
       })
     );
   }
@@ -249,7 +254,7 @@ export default function Income() {
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Promotional Incentive</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandPromoIncentive)}</p>
-            <p className="text-xs text-maroon-900/40 mt-1">redeemed pins, all accounts</p>
+            <p className="text-xs text-maroon-900/40 mt-1">redeemed pins {formatINR(grandPromoIncentiveGross)} &middot; actual is 50%</p>
           </div>
           <div className="bg-gold-500 rounded-xl shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/60 uppercase tracking-wider">Total Income (Net)</p>
@@ -289,6 +294,7 @@ export default function Income() {
                   {accounts.map((a) => {
                     const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, promotionalIncentive: 0 };
                     const net = netOf(t);
+                    const promo = promoActualOf(t);
                     return (
                       <tr key={a.member_id} className="hover:bg-maroon-50/50">
                         <td className="px-5 py-3">
@@ -299,8 +305,8 @@ export default function Income() {
                         <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                         <td className="px-5 py-3">{formatINR(net)}</td>
                         <td className="px-5 py-3">{formatINR(t.turnoverSalary)}</td>
-                        <td className="px-5 py-3">{formatINR(t.promotionalIncentive)}</td>
-                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + t.promotionalIncentive)}</td>
+                        <td className="px-5 py-3">{formatINR(promo)}</td>
+                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + promo)}</td>
                       </tr>
                     );
                   })}
@@ -356,10 +362,11 @@ export default function Income() {
                   {monthKeys.map((key) => {
                     const t = monthlyTotals.get(key)!;
                     const net = netOf(t);
+                    const promo = promoActualOf(t);
                     const accountBreakdown = [...(monthlyByAccount.get(key) ?? new Map())].sort(
                       (a, b) =>
-                        netOf(b[1]) + b[1].turnoverSalary + b[1].promotionalIncentive -
-                        (netOf(a[1]) + a[1].turnoverSalary + a[1].promotionalIncentive)
+                        netOf(b[1]) + b[1].turnoverSalary + promoActualOf(b[1]) -
+                        (netOf(a[1]) + a[1].turnoverSalary + promoActualOf(a[1]))
                     );
                     return (
                       <Fragment key={key}>
@@ -368,8 +375,8 @@ export default function Income() {
                           <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                           <td className="px-5 py-3">{formatINR(net)}</td>
                           <td className="px-5 py-3">{formatINR(t.turnoverSalary)}</td>
-                          <td className="px-5 py-3">{formatINR(t.promotionalIncentive)}</td>
-                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + t.promotionalIncentive)}</td>
+                          <td className="px-5 py-3">{formatINR(promo)}</td>
+                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalary + promo)}</td>
                           <td className="px-5 py-3 text-right">
                             <button
                               onClick={() => toggleMonth(key)}
@@ -397,8 +404,8 @@ export default function Income() {
                                   <td className="px-4 py-2 text-sm text-maroon-900/50">{formatINR(at.salesIncentiveGross)}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(netOf(at))}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(at.turnoverSalary)}</td>
-                                  <td className="px-4 py-2 text-sm">{formatINR(at.promotionalIncentive)}</td>
-                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalary + at.promotionalIncentive)}</td>
+                                  <td className="px-4 py-2 text-sm">{formatINR(promoActualOf(at))}</td>
+                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalary + promoActualOf(at))}</td>
                                   <td className="px-4 py-2 text-right">
                                     <button
                                       onClick={() => toggleAccountMonth(amKey)}
@@ -480,7 +487,7 @@ export default function Income() {
                                                 <th className="py-1 pr-4">Code</th>
                                                 <th className="py-1 pr-4">Category</th>
                                                 <th className="py-1 pr-4">Dated</th>
-                                                <th className="py-1 pr-4">Amount</th>
+                                                <th className="py-1 pr-4">Amount (Actual)</th>
                                               </tr>
                                             </thead>
                                             <tbody>
@@ -489,7 +496,7 @@ export default function Income() {
                                                   <td className="py-1 pr-4 font-mono">{r.code}</td>
                                                   <td className="py-1 pr-4">{r.category}</td>
                                                   <td className="py-1 pr-4">{formatDate(r.dated)}</td>
-                                                  <td className="py-1 pr-4">{formatINR(r.amount)}</td>
+                                                  <td className="py-1 pr-4">{formatINR((r.amount ?? 0) * PI_ACTUAL_RATE)}</td>
                                                 </tr>
                                               ))}
                                             </tbody>
