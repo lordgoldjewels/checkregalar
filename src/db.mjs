@@ -83,23 +83,27 @@ export async function upsertAccount({ memberId, name, phone, uplineMemberId = nu
   if (error) throw new Error(`upsertAccount(${memberId}): ${error.message}`);
 }
 
-export async function insertDashboardSnapshot(accountId, capturedAt, dashboard) {
+/** Upserts the dashboard snapshot in place (one row per account) - not history, just current status. */
+export async function upsertDashboardSnapshot(accountId, capturedAt, dashboard) {
   if (!dbEnabled) return;
-  const { error } = await supabase.from("dashboard_snapshots").insert({
-    account_id: accountId,
-    captured_at: capturedAt,
-    my_business: parseAmount(dashboard.myBusiness),
-    my_promotional_incentive: parseAmount(dashboard.myPromotionalIncentive),
-    my_promotional_incentive_earned: dashboard.myPromotionalIncentiveCount?.earned ?? null,
-    my_promotional_incentive_total: dashboard.myPromotionalIncentiveCount?.total ?? null,
-    my_distributors: parseAmount(dashboard.myDistributors),
-    my_gross_b_volume: parseAmount(dashboard.myGrossBVolume),
-    my_earning: parseAmount(dashboard.myEarning),
-    my_withdraw: parseAmount(dashboard.myWithdraw),
-    my_tbp_gross_b_volume: parseAmount(dashboard.myTbpGrossBVolume),
-    my_gift: parseAmount(dashboard.myGift),
-  });
-  if (error) throw new Error(`insertDashboardSnapshot(${accountId}): ${error.message}`);
+  const { error } = await supabase.from("dashboard_snapshots").upsert(
+    {
+      account_id: accountId,
+      captured_at: capturedAt,
+      my_business: parseAmount(dashboard.myBusiness),
+      my_promotional_incentive: parseAmount(dashboard.myPromotionalIncentive),
+      my_promotional_incentive_earned: dashboard.myPromotionalIncentiveCount?.earned ?? null,
+      my_promotional_incentive_total: dashboard.myPromotionalIncentiveCount?.total ?? null,
+      my_distributors: parseAmount(dashboard.myDistributors),
+      my_gross_b_volume: parseAmount(dashboard.myGrossBVolume),
+      my_earning: parseAmount(dashboard.myEarning),
+      my_withdraw: parseAmount(dashboard.myWithdraw),
+      my_tbp_gross_b_volume: parseAmount(dashboard.myTbpGrossBVolume),
+      my_gift: parseAmount(dashboard.myGift),
+    },
+    { onConflict: "account_id" }
+  );
+  if (error) throw new Error(`upsertDashboardSnapshot(${accountId}): ${error.message}`);
 }
 
 /**

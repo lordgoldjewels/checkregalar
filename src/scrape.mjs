@@ -15,7 +15,7 @@ import {
   listPhoneSessions,
   listAccountsForPhone,
   upsertAccount,
-  insertDashboardSnapshot,
+  upsertDashboardSnapshot,
   upsertSalesIncentive,
   upsertTurnoverSalary,
   upsertPromotionalIncentivePins,
@@ -148,8 +148,8 @@ for (const { phone_number: phone, status } of phoneSessions) {
 
       step = "db.upsertAccount";
       await upsertAccount({ memberId, name, phone });
-      step = "db.insertDashboardSnapshot";
-      await insertDashboardSnapshot(memberId, scrapedAt, dashboard);
+      step = "db.upsertDashboardSnapshot";
+      await upsertDashboardSnapshot(memberId, scrapedAt, dashboard);
       step = "db.upsertSalesIncentive";
       const newInvoices = await upsertSalesIncentive(memberId, salesIncentive);
       step = "db.upsertTurnoverSalary";
