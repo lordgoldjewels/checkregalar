@@ -123,6 +123,30 @@ export default function DigigoldTransactions() {
     });
   }
 
+  function expandAll() {
+    if (groupBy === "month") {
+      setExpandedGroups(new Set(monthGroups.map(([k]) => k)));
+    } else if (groupBy === "account") {
+      setExpandedGroups(new Set(accountGroups.map(([k]) => k)));
+    } else if (groupBy === "both") {
+      const groups = new Set<string>();
+      const subgroups = new Set<string>();
+      for (const [monthKey, monthList] of monthGroups) {
+        groups.add(monthKey);
+        for (const accountId of new Set(monthList.map((t) => t.accountId))) {
+          subgroups.add(`${monthKey}|${accountId}`);
+        }
+      }
+      setExpandedGroups(groups);
+      setExpandedSubgroups(subgroups);
+    }
+  }
+
+  function collapseAll() {
+    setExpandedGroups(new Set());
+    setExpandedSubgroups(new Set());
+  }
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -343,9 +367,21 @@ export default function DigigoldTransactions() {
           <>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold text-maroon-900">Transactions</h2>
-              <button onClick={exportCsv} className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50">
-                Export CSV
-              </button>
+              <div className="flex items-center gap-2">
+                {groupBy !== "none" && (
+                  <>
+                    <button onClick={expandAll} className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50">
+                      Expand All
+                    </button>
+                    <button onClick={collapseAll} className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50">
+                      Collapse All
+                    </button>
+                  </>
+                )}
+                <button onClick={exportCsv} className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50">
+                  Export CSV
+                </button>
+              </div>
             </div>
 
             {groupBy === "none" && (

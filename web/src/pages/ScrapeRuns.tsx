@@ -23,7 +23,7 @@ const STATUS_STYLE: Record<string, string> = {
 export default function ScrapeRuns() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     supabase
@@ -36,6 +36,22 @@ export default function ScrapeRuns() {
         setLoading(false);
       });
   }, []);
+
+  function toggleRun(id: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function expandAllRuns() {
+    setExpanded(new Set(runs.filter((r) => r.errors).map((r) => r.id)));
+  }
+
+  function collapseAllRuns() {
+    setExpanded(new Set());
+  }
 
   return (
     <Layout>
@@ -50,7 +66,24 @@ export default function ScrapeRuns() {
             <p className="text-sm text-maroon-900/40">Loading…</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden">
+          <>
+            {runs.some((r) => r.errors) && (
+              <div className="flex items-center justify-end gap-2 mb-3">
+                <button
+                  onClick={expandAllRuns}
+                  className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+                >
+                  Expand All
+                </button>
+                <button
+                  onClick={collapseAllRuns}
+                  className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+                >
+                  Collapse All
+                </button>
+              </div>
+            )}
+            <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-maroon-50 text-left text-xs font-semibold text-maroon-900/50 uppercase tracking-wider">
@@ -78,15 +111,15 @@ export default function ScrapeRuns() {
                       <td className="px-5 py-3 text-right">
                         {r.errors && (
                           <button
-                            onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+                            onClick={() => toggleRun(r.id)}
                             className="text-xs font-medium text-maroon-700 hover:underline"
                           >
-                            {expanded === r.id ? "Hide errors" : "View errors"}
+                            {expanded.has(r.id) ? "Hide errors" : "View errors"}
                           </button>
                         )}
                       </td>
                     </tr>
-                    {expanded === r.id && r.errors && (
+                    {expanded.has(r.id) && r.errors && (
                       <tr>
                         <td colSpan={6} className="px-5 py-3 bg-red-50/50">
                           <pre className="text-xs text-red-700 whitespace-pre-wrap">{JSON.stringify(r.errors, null, 2)}</pre>
@@ -104,7 +137,8 @@ export default function ScrapeRuns() {
                 )}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </Layout>

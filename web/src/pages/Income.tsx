@@ -96,6 +96,22 @@ export default function Income() {
     });
   }
 
+  function expandAllMonths() {
+    setExpandedMonths(new Set(monthKeys));
+    const all = new Set<string>();
+    for (const key of monthKeys) {
+      for (const accountId of (monthlyByAccount.get(key) ?? new Map()).keys()) {
+        all.add(monthAccountKey(key, accountId));
+      }
+    }
+    setExpandedAccountMonths(all);
+  }
+
+  function collapseAllMonths() {
+    setExpandedMonths(new Set());
+    setExpandedAccountMonths(new Set());
+  }
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -356,12 +372,26 @@ export default function Income() {
 
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-lg font-semibold text-maroon-900">By Month</h2>
-              <button
-                onClick={exportByMonthCsv}
-                className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
-              >
-                Export CSV
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={expandAllMonths}
+                  className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+                >
+                  Expand All
+                </button>
+                <button
+                  onClick={collapseAllMonths}
+                  className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+                >
+                  Collapse All
+                </button>
+                <button
+                  onClick={exportByMonthCsv}
+                  className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+                >
+                  Export CSV
+                </button>
+              </div>
             </div>
             <p className="text-xs text-maroon-900/40 mb-3">
               Promotional Incentive is attributed to the month a pin's redemption date falls in.

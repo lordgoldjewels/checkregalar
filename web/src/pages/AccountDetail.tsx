@@ -136,6 +136,14 @@ export default function AccountDetail() {
     });
   }
 
+  function expandAllTurnoverSalary() {
+    setExpanded(new Set(turnoverSalary.map((r) => r.id)));
+  }
+
+  function collapseAllTurnoverSalary() {
+    setExpanded(new Set());
+  }
+
   const latest = snapshots[0];
 
   const pinStatusStyle: Record<string, string> = {
@@ -274,12 +282,26 @@ export default function AccountDetail() {
         {/* Turnover-based Salary */}
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-maroon-900">Turnover-based Salary</h2>
-          <button
-            onClick={exportTurnoverSalaryCsv}
-            className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
-          >
-            Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={expandAllTurnoverSalary}
+              className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+            >
+              Expand All
+            </button>
+            <button
+              onClick={collapseAllTurnoverSalary}
+              className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+            >
+              Collapse All
+            </button>
+            <button
+              onClick={exportTurnoverSalaryCsv}
+              className="text-xs font-medium text-maroon-700 border border-maroon-200 rounded-lg px-3 py-1.5 hover:bg-maroon-50"
+            >
+              Export CSV
+            </button>
+          </div>
         </div>
         <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
