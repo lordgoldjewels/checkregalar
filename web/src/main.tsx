@@ -11,6 +11,7 @@ import Income        from "./pages/Income";
 import Digigold      from "./pages/Digigold";
 import DigigoldTransactions from "./pages/DigigoldTransactions";
 import ScrapeRuns    from "./pages/ScrapeRuns";
+import Settings      from "./pages/Settings";
 import { supabase }  from "./lib/supabase";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -45,6 +46,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/digigold"            element={<RequireAuth><Digigold /></RequireAuth>} />
         <Route path="/digigold/transactions" element={<RequireAuth><DigigoldTransactions /></RequireAuth>} />
         <Route path="/scrape-runs"         element={<RequireAuth><ScrapeRuns /></RequireAuth>} />
+        <Route path="/settings"            element={<RequireAuth><Settings /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

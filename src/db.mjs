@@ -324,3 +324,20 @@ export async function finishScrapeRun(runId, { status, accountsScraped, errors }
     .eq("id", runId);
   if (error) throw new Error(`finishScrapeRun(${runId}): ${error.message}`);
 }
+
+const ALL_NOTIFICATION_TYPES = [
+  "sales_incentive", "turnover_salary", "promotional_incentive",
+  "digigold_buy", "digigold_sell",
+  "scrape_crashed", "failed_to_load_home", "session_expired",
+  "account_scrape_failure", "partial_run_summary",
+];
+
+// Missing rows or a fetch failure default to enabled, so a DB hiccup never
+// silently mutes an alert.
+export async function getNotificationSettings() {
+  const settings = Object.fromEntries(ALL_NOTIFICATION_TYPES.map((t) => [t, true]));
+  if (!dbEnabled) return settings;
+  const { data } = await supabase.from("notification_settings").select("type, enabled");
+  for (const row of data ?? []) settings[row.type] = row.enabled;
+  return settings;
+}

@@ -27,6 +27,10 @@ const NAV = [
     to: "/scrape-runs", label: "Scrape Runs", end: false,
     icon: <><circle cx="12" cy="12" r="8" /><path d="M12 8v4l2.5 2" /></>,
   },
+  {
+    to: "/settings", label: "Notifications", end: false,
+    icon: <><path d="M6 8a6 6 0 0112 0c0 4 1.5 6 2 6.5H4c.5-.5 2-2.5 2-6.5z" /><path d="M9.5 18a2.5 2.5 0 005 0" /></>,
+  },
 ];
 
 const COLLAPSE_KEY = "lgc-admin-sidebar-collapsed";
