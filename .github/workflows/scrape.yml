@@ -1,8 +1,10 @@
 name: Scrape
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
+  # Actually triggered every 30 min by a pg_cron job in Supabase calling this
+  # workflow's dispatch API, not GitHub's own `schedule:` trigger - that was
+  # observed firing 3.5-12 hours late instead of every 30 min (a known
+  # platform limitation: GitHub deprioritizes high-frequency cron schedules).
   workflow_dispatch: {}
 
 jobs:
