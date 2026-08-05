@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
+import Toggle from "../components/Toggle";
 
 interface NotificationType {
   type: string;
@@ -22,25 +23,6 @@ const TYPES: NotificationType[] = [
 ];
 
 const CATEGORIES = ["New Earnings", "DigiGold Transactions", "Failures"];
-
-function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      role="switch"
-      aria-checked={on}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        on ? "bg-maroon-700" : "bg-gray-300"
-      }`}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-          on ? "translate-x-6" : "translate-x-1"
-        }`}
-      />
-    </button>
-  );
-}
 
 export default function Settings() {
   const [enabled, setEnabled] = useState<Map<string, boolean>>(new Map());

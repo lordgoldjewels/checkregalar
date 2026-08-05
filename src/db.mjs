@@ -61,7 +61,8 @@ export async function listAccountsForPhone(phone) {
   const { data, error } = await supabase
     .from("accounts")
     .select("member_id, name")
-    .eq("phone_number", phone);
+    .eq("phone_number", phone)
+    .eq("enabled", true);
   if (error) throw new Error(`listAccountsForPhone(${phone}): ${error.message}`);
   return data.map((a) => ({ memberId: a.member_id, name: a.name }));
 }
