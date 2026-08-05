@@ -11,6 +11,7 @@ interface AccountRow {
 }
 
 interface CombinedTransaction {
+  key: string;
   date: string | null;
   accountId: string;
   accountName: string;
@@ -54,7 +55,7 @@ function summarize(list: CombinedTransaction[]) {
 function transactionRow(t: CombinedTransaction, dense: boolean) {
   const pad = dense ? "py-1 pr-4" : "px-5 py-3";
   return (
-    <tr key={`${t.type}-${t.reference}`} className={dense ? "" : "hover:bg-maroon-50/50"}>
+    <tr key={t.key} className={dense ? "" : "hover:bg-maroon-50/50"}>
       <td className={pad}>{formatDate(t.date)}</td>
       <td className={pad}>
         <Link to={`/accounts/${t.accountId}`} className={dense ? "text-maroon-700 hover:underline" : "font-medium text-maroon-700 hover:underline"}>
@@ -161,7 +162,7 @@ export default function DigigoldTransactions() {
         .select("account_id, order_id, buy_date, weight_gm, gold_worth, price_on_day"),
       supabase
         .from("digigold_sell_transactions")
-        .select("account_id, transaction_remarks, sell_date, weight_gm, gold_worth, status"),
+        .select("account_id, transaction_remarks, sell_date, weight_gm, gold_worth, status, occurrence"),
     ]);
 
     const accountList = (accountsRes.data as AccountRow[]) ?? [];
@@ -177,6 +178,7 @@ export default function DigigoldTransactions() {
         price_on_day: number | null;
       }[]) ?? []
     ).map((r) => ({
+      key: `buy-${r.account_id}-${r.order_id}`,
       date: r.buy_date,
       accountId: r.account_id,
       accountName: nameOf.get(r.account_id) ?? r.account_id,
@@ -196,8 +198,10 @@ export default function DigigoldTransactions() {
         weight_gm: number | null;
         gold_worth: number | null;
         status: string | null;
+        occurrence: number;
       }[]) ?? []
     ).map((r) => ({
+      key: `sell-${r.account_id}-${r.sell_date}-${r.weight_gm}-${r.gold_worth}-${r.occurrence}`,
       date: r.sell_date,
       accountId: r.account_id,
       accountName: nameOf.get(r.account_id) ?? r.account_id,
