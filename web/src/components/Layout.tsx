@@ -16,8 +16,12 @@ const NAV = [
     icon: <path d="M12 2v20M17 6.5c0-1.9-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3" />,
   },
   {
-    to: "/digigold", label: "Digi-Gold", end: false,
+    to: "/digigold", label: "Digi-Gold", end: true,
     icon: <><circle cx="12" cy="12" r="8" /><path d="M12 7v10M8.5 9.5h5.25a2 2 0 010 4H8.5" /></>,
+  },
+  {
+    to: "/digigold/transactions", label: "All Transactions", end: false,
+    icon: <><path d="M4 6h16M4 12h16M4 18h10" /></>,
   },
   {
     to: "/scrape-runs", label: "Scrape Runs", end: false,
