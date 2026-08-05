@@ -227,9 +227,11 @@ export async function upsertDigigoldBuy(accountId, rows) {
 // transaction_remarks is blank on the site until a sell settles, so two
 // different PENDING sells for the same account can share transaction_remarks
 // - identify a sell by (sell_date, weight_gm, gold_worth) instead, which is
-// always populated, even while pending.
+// always populated, even while pending. occurrence further disambiguates
+// two genuinely different sells that share all three (e.g. the same gram
+// amount sold twice in one day at the same rate) - see upsertDigigoldSell.
 function sellKey(r) {
-  return `${r.sell_date}|${r.weight_gm}|${r.gold_worth}`;
+  return `${r.sell_date}|${r.weight_gm}|${r.gold_worth}|${r.occurrence}`;
 }
 
 export async function upsertDigigoldSell(accountId, rows) {
@@ -237,24 +239,37 @@ export async function upsertDigigoldSell(accountId, rows) {
 
   const { data: existing, error: fetchError } = await supabase
     .from("digigold_sell_transactions")
-    .select("sell_date, weight_gm, gold_worth, status")
+    .select("sell_date, weight_gm, gold_worth, occurrence, status")
     .eq("account_id", accountId);
   if (fetchError) throw new Error(`upsertDigigoldSell(${accountId}) fetch: ${fetchError.message}`);
   const existingByKey = new Map((existing ?? []).map((r) => [sellKey(r), r.status]));
 
-  let records = rows.map((r) => ({
-    account_id: accountId,
-    transaction_remarks: r.transactionRemarks,
-    sell_date: parseDdMmYyyy(r.sellDate),
-    weight_gm: parseAmount(r.weightGm),
-    gold_worth: parseAmount(r.goldWorth),
-    wallet_remarks: r.walletRemarks || null,
-    status: r.status,
-  }));
+  // occurrence = the Nth row this scrape sharing the same date/weight/worth,
+  // assigned in scrape order so it stays stable run to run as long as the
+  // site's own row order does.
+  const occurrenceCounts = new Map();
+  let records = rows.map((r) => {
+    const sell_date = parseDdMmYyyy(r.sellDate);
+    const weight_gm = parseAmount(r.weightGm);
+    const gold_worth = parseAmount(r.goldWorth);
+    const groupKey = `${sell_date}|${weight_gm}|${gold_worth}`;
+    const occurrence = occurrenceCounts.get(groupKey) ?? 0;
+    occurrenceCounts.set(groupKey, occurrence + 1);
+    return {
+      account_id: accountId,
+      transaction_remarks: r.transactionRemarks,
+      sell_date,
+      weight_gm,
+      gold_worth,
+      wallet_remarks: r.walletRemarks || null,
+      status: r.status,
+      occurrence,
+    };
+  });
   records = dedupeByKey(records, sellKey);
   const { error } = await supabase
     .from("digigold_sell_transactions")
-    .upsert(records, { onConflict: "account_id,sell_date,weight_gm,gold_worth" });
+    .upsert(records, { onConflict: "account_id,sell_date,weight_gm,gold_worth,occurrence" });
   if (error) throw new Error(`upsertDigigoldSell(${accountId}): ${error.message}`);
 
   return records.flatMap((r) => {
