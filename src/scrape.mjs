@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { launchContext, DATA_DIR, BASE_URL } from "./browser.mjs";
-import { switchToAccount } from "./changeProfile.mjs";
+import { switchToAccount, assertActiveAccount } from "./changeProfile.mjs";
 import { scrapeDashboard } from "./scrapers/dashboard.mjs";
 import { scrapeSalesIncentive } from "./scrapers/salesIncentive.mjs";
 import { scrapeTurnoverSalary } from "./scrapers/turnoverSalary.mjs";
@@ -146,6 +146,10 @@ for (const { phone_number: phone, status } of phoneSessions) {
       const digigoldBuy = await scrapeDigigoldBuy(page);
       step = "scrapeDigigoldSell";
       const digigoldSell = await scrapeDigigoldSell(page);
+      // Re-check before writing anything: if the profile changed mid-scrape
+      // (another run, or someone using the site), this data isn't memberId's.
+      step = "verifyActiveAccount";
+      await assertActiveAccount(page, memberId);
 
       const scrapedAt = new Date().toISOString();
 

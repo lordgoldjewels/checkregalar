@@ -71,7 +71,8 @@ export async function listAccountsForPhone(phone) {
     .from("accounts")
     .select("member_id, name")
     .eq("phone_number", phone)
-    .eq("enabled", true);
+    .eq("enabled", true)
+    .order("member_id");
   if (error) throw new Error(`listAccountsForPhone(${phone}): ${error.message}`);
   return data.map((a) => ({ memberId: a.member_id, name: a.name }));
 }
@@ -219,36 +220,22 @@ export async function upsertDigigoldBuy(accountId, rows) {
   return records.filter((r) => !existingOrders.has(r.order_id));
 }
 
-/**
- * Upserts DigiGold sell transactions and returns the ones worth flagging:
- * a brand-new transaction, or an existing one whose status changed
- * (e.g. PENDING -> PASSED).
- */
 // transaction_remarks is blank on the site until a sell settles, so two
 // different PENDING sells for the same account can share transaction_remarks
 // - identify a sell by (sell_date, weight_gm, gold_worth) instead, which is
 // always populated, even while pending. occurrence further disambiguates
 // two genuinely different sells that share all three (e.g. the same gram
 // amount sold twice in one day at the same rate) - see upsertDigigoldSell.
-function sellKey(r) {
+export function sellKey(r) {
   return `${r.sell_date}|${r.weight_gm}|${r.gold_worth}|${r.occurrence}`;
 }
 
-export async function upsertDigigoldSell(accountId, rows) {
-  if (!dbEnabled || rows.length === 0) return [];
-
-  const { data: existing, error: fetchError } = await supabase
-    .from("digigold_sell_transactions")
-    .select("sell_date, weight_gm, gold_worth, occurrence, status")
-    .eq("account_id", accountId);
-  if (fetchError) throw new Error(`upsertDigigoldSell(${accountId}) fetch: ${fetchError.message}`);
-  const existingByKey = new Map((existing ?? []).map((r) => [sellKey(r), r.status]));
-
-  // occurrence = the Nth row this scrape sharing the same date/weight/worth,
-  // assigned in scrape order so it stays stable run to run as long as the
-  // site's own row order does.
+// occurrence = the Nth row this scrape sharing the same date/weight/worth,
+// assigned in scrape order so it stays stable run to run as long as the
+// site's own row order does.
+export function toDigigoldSellRecords(accountId, rows) {
   const occurrenceCounts = new Map();
-  let records = rows.map((r) => {
+  return rows.map((r) => {
     const sell_date = parseDdMmYyyy(r.sellDate);
     const weight_gm = parseAmount(r.weightGm);
     const gold_worth = parseAmount(r.goldWorth);
@@ -266,7 +253,24 @@ export async function upsertDigigoldSell(accountId, rows) {
       occurrence,
     };
   });
-  records = dedupeByKey(records, sellKey);
+}
+
+/**
+ * Upserts DigiGold sell transactions and returns the ones worth flagging:
+ * a brand-new transaction, or an existing one whose status changed
+ * (e.g. PENDING -> PASSED).
+ */
+export async function upsertDigigoldSell(accountId, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("digigold_sell_transactions")
+    .select("sell_date, weight_gm, gold_worth, occurrence, status")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertDigigoldSell(${accountId}) fetch: ${fetchError.message}`);
+  const existingByKey = new Map((existing ?? []).map((r) => [sellKey(r), r.status]));
+
+  const records = dedupeByKey(toDigigoldSellRecords(accountId, rows), sellKey);
   const { error } = await supabase
     .from("digigold_sell_transactions")
     .upsert(records, { onConflict: "account_id,sell_date,weight_gm,gold_worth,occurrence" });
