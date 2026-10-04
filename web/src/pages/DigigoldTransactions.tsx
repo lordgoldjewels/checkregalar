@@ -2,10 +2,11 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
-import { formatINR, formatGm, formatDate } from "../lib/format";
+import { formatINR, formatGm, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
 import Gain from "../components/Gain";
+import WorthCard from "../components/WorthCard";
 
 interface AccountRow {
   member_id: string;
@@ -49,8 +50,24 @@ function summarize(list: CombinedTransaction[]) {
       count: acc.count + 1,
       weightGm: acc.weightGm + (t.weightGm ?? 0),
       worth: acc.worth + (t.worth ?? 0),
+      buyGm: acc.buyGm + (t.type === "Buy" ? t.weightGm ?? 0 : 0),
+      buyPaid: acc.buyPaid + (t.type === "Buy" ? t.worth ?? 0 : 0),
     }),
-    { count: 0, weightGm: 0, worth: 0 }
+    { count: 0, weightGm: 0, worth: 0, buyGm: 0, buyPaid: 0 }
+  );
+}
+
+// What the buys in a summary are worth at the current rate, with gain/loss.
+function BuysWorthNow({ s, rate }: { s: ReturnType<typeof summarize>; rate: GoldRate | null }) {
+  if (s.buyGm === 0) return <span className="text-maroon-900/40">—</span>;
+  const now = currentWorth(s.buyGm, rate);
+  return (
+    <>
+      {formatINR(now)}
+      <span className="block text-xs font-normal">
+        <Gain current={now} paid={s.buyPaid} />
+      </span>
+    </>
   );
 }
 
@@ -75,6 +92,7 @@ function transactionRow(t: CombinedTransaction, dense: boolean, rate: GoldRate |
       <td className={pad}>{formatGm(t.weightGm)}</td>
       <td className={pad}>{formatINR(t.worth)}</td>
       <td className={pad}>{formatINR(t.priceOnDay)}</td>
+      <td className={pad}>{t.type === "Buy" ? formatINR(rate?.rate) : "—"}</td>
       <td className={pad}>
         {t.type === "Buy" ? (
           <>
@@ -104,6 +122,7 @@ function DetailTable({ rows, rate }: { rows: CombinedTransaction[]; rate: GoldRa
           <th className="py-1 pr-4">Weight (gm)</th>
           <th className="py-1 pr-4">Worth</th>
           <th className="py-1 pr-4">Price on Day</th>
+          <th className="py-1 pr-4">Current Price</th>
           <th className="py-1 pr-4">Current Worth</th>
           <th className="py-1 pr-4">Status</th>
           <th className="py-1 pr-4">Reference</th>
@@ -300,8 +319,8 @@ export default function DigigoldTransactions() {
   function exportCsv() {
     downloadCsv(
       "digigold-transactions.csv",
-      ["Date", "Account", "Type", "Weight (gm)", "Worth", "Price on Day", "Current Worth", "Status", "Reference"],
-      filtered.map((t) => [formatDate(t.date), t.accountName, t.type, t.weightGm, t.worth, t.priceOnDay, buyCurrentWorth(t, goldRate), t.status, t.reference])
+      ["Date", "Account", "Type", "Weight (gm)", "Worth", "Price on Day", "Current Price", "Current Worth", "Status", "Reference"],
+      filtered.map((t) => [formatDate(t.date), t.accountName, t.type, t.weightGm, t.worth, t.priceOnDay, t.type === "Buy" ? goldRate?.rate ?? null : null, buyCurrentWorth(t, goldRate), t.status, t.reference])
     );
   }
 
@@ -313,7 +332,17 @@ export default function DigigoldTransactions() {
           <p className="text-sm text-maroon-900/50 mt-0.5">Every Buy and Sell transaction, across all accounts</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+          <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
+            <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Gold Rate</p>
+            <p className="text-3xl font-bold mt-2 text-maroon-900">
+              {goldRate ? formatINR(goldRate.rate) : "—"}
+              <span className="text-sm font-normal text-maroon-900/40"> /gm</span>
+            </p>
+            <p className="text-xs text-maroon-900/40 mt-1">
+              {goldRate ? `excl. GST · as of ${formatDateTime(goldRate.capturedAt)}` : "not captured yet"}
+            </p>
+          </div>
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Transactions</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{summary.count}</p>
@@ -329,6 +358,13 @@ export default function DigigoldTransactions() {
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(summary.worth)}</p>
             <p className="text-xs text-maroon-900/40 mt-1">matching current filters</p>
           </div>
+          <WorthCard
+            label="Buys Worth Now"
+            current={currentWorth(summary.buyGm, goldRate)}
+            paid={summary.buyPaid}
+            gm={summary.buyGm}
+            emptyText="no buys match current filters"
+          />
         </div>
 
         <div className="flex flex-wrap items-end gap-3 mb-4">
@@ -422,6 +458,7 @@ export default function DigigoldTransactions() {
                       <th className="px-5 py-3">Weight (gm)</th>
                       <th className="px-5 py-3">Worth</th>
                       <th className="px-5 py-3">Price on Day</th>
+                      <th className="px-5 py-3">Current Price</th>
                       <th className="px-5 py-3">Current Worth</th>
                       <th className="px-5 py-3">Status</th>
                       <th className="px-5 py-3">Reference</th>
@@ -431,7 +468,7 @@ export default function DigigoldTransactions() {
                     {filtered.map((t) => transactionRow(t, false, goldRate))}
                     {filtered.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="px-5 py-8 text-center text-maroon-900/40">
+                        <td colSpan={10} className="px-5 py-8 text-center text-maroon-900/40">
                           No transactions match these filters.
                         </td>
                       </tr>
@@ -450,6 +487,7 @@ export default function DigigoldTransactions() {
                       <th className="px-5 py-3">Transactions</th>
                       <th className="px-5 py-3">Weight</th>
                       <th className="px-5 py-3">Worth</th>
+                      <th className="px-5 py-3">Buys Worth Now</th>
                       <th className="px-5 py-3" />
                     </tr>
                   </thead>
@@ -463,6 +501,7 @@ export default function DigigoldTransactions() {
                             <td className="px-5 py-3">{s.count}</td>
                             <td className="px-5 py-3">{formatGm(s.weightGm)}</td>
                             <td className="px-5 py-3 font-semibold">{formatINR(s.worth)}</td>
+                            <td className="px-5 py-3"><BuysWorthNow s={s} rate={goldRate} /></td>
                             <td className="px-5 py-3 text-right">
                               <button onClick={() => toggleGroup(key)} className="text-xs font-medium text-maroon-700 hover:underline">
                                 {expandedGroups.has(key) ? "Hide" : "Breakdown"}
@@ -471,7 +510,7 @@ export default function DigigoldTransactions() {
                           </tr>
                           {expandedGroups.has(key) && (
                             <tr>
-                              <td colSpan={5} className="px-4 py-3 bg-maroon-50/40">
+                              <td colSpan={6} className="px-4 py-3 bg-maroon-50/40">
                                 <DetailTable rows={list} rate={goldRate} />
                               </td>
                             </tr>
@@ -481,7 +520,7 @@ export default function DigigoldTransactions() {
                     })}
                     {monthGroups.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-5 py-8 text-center text-maroon-900/40">
+                        <td colSpan={6} className="px-5 py-8 text-center text-maroon-900/40">
                           No transactions match these filters.
                         </td>
                       </tr>
@@ -500,6 +539,7 @@ export default function DigigoldTransactions() {
                       <th className="px-5 py-3">Transactions</th>
                       <th className="px-5 py-3">Weight</th>
                       <th className="px-5 py-3">Worth</th>
+                      <th className="px-5 py-3">Buys Worth Now</th>
                       <th className="px-5 py-3" />
                     </tr>
                   </thead>
@@ -517,6 +557,7 @@ export default function DigigoldTransactions() {
                             <td className="px-5 py-3">{s.count}</td>
                             <td className="px-5 py-3">{formatGm(s.weightGm)}</td>
                             <td className="px-5 py-3 font-semibold">{formatINR(s.worth)}</td>
+                            <td className="px-5 py-3"><BuysWorthNow s={s} rate={goldRate} /></td>
                             <td className="px-5 py-3 text-right">
                               <button onClick={() => toggleGroup(accountId)} className="text-xs font-medium text-maroon-700 hover:underline">
                                 {expandedGroups.has(accountId) ? "Hide" : "Breakdown"}
@@ -525,7 +566,7 @@ export default function DigigoldTransactions() {
                           </tr>
                           {expandedGroups.has(accountId) && (
                             <tr>
-                              <td colSpan={5} className="px-4 py-3 bg-maroon-50/40">
+                              <td colSpan={6} className="px-4 py-3 bg-maroon-50/40">
                                 <DetailTable rows={list} rate={goldRate} />
                               </td>
                             </tr>
@@ -535,7 +576,7 @@ export default function DigigoldTransactions() {
                     })}
                     {accountGroups.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-5 py-8 text-center text-maroon-900/40">
+                        <td colSpan={6} className="px-5 py-8 text-center text-maroon-900/40">
                           No transactions match these filters.
                         </td>
                       </tr>
@@ -554,6 +595,7 @@ export default function DigigoldTransactions() {
                       <th className="px-5 py-3">Transactions</th>
                       <th className="px-5 py-3">Weight</th>
                       <th className="px-5 py-3">Worth</th>
+                      <th className="px-5 py-3">Buys Worth Now</th>
                       <th className="px-5 py-3" />
                     </tr>
                   </thead>
@@ -574,6 +616,7 @@ export default function DigigoldTransactions() {
                             <td className="px-5 py-3">{s.count}</td>
                             <td className="px-5 py-3">{formatGm(s.weightGm)}</td>
                             <td className="px-5 py-3 font-semibold">{formatINR(s.worth)}</td>
+                            <td className="px-5 py-3"><BuysWorthNow s={s} rate={goldRate} /></td>
                             <td className="px-5 py-3 text-right">
                               <button onClick={() => toggleGroup(monthKey)} className="text-xs font-medium text-maroon-700 hover:underline">
                                 {expandedGroups.has(monthKey) ? "Hide" : "Breakdown"}
@@ -595,6 +638,7 @@ export default function DigigoldTransactions() {
                                     <td className="px-4 py-2 text-sm">{as.count}</td>
                                     <td className="px-4 py-2 text-sm">{formatGm(as.weightGm)}</td>
                                     <td className="px-4 py-2 text-sm font-semibold">{formatINR(as.worth)}</td>
+                                    <td className="px-4 py-2 text-sm"><BuysWorthNow s={as} rate={goldRate} /></td>
                                     <td className="px-4 py-2 text-right">
                                       <button onClick={() => toggleSubgroup(subKey)} className="text-xs font-medium text-maroon-700 hover:underline">
                                         {expandedSubgroups.has(subKey) ? "Hide" : "Details"}
@@ -603,7 +647,7 @@ export default function DigigoldTransactions() {
                                   </tr>
                                   {expandedSubgroups.has(subKey) && (
                                     <tr>
-                                      <td colSpan={5} className="px-4 py-3 bg-maroon-100/40">
+                                      <td colSpan={6} className="px-4 py-3 bg-maroon-100/40">
                                         <DetailTable rows={accList} rate={goldRate} />
                                       </td>
                                     </tr>
@@ -616,7 +660,7 @@ export default function DigigoldTransactions() {
                     })}
                     {monthGroups.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-5 py-8 text-center text-maroon-900/40">
+                        <td colSpan={6} className="px-5 py-8 text-center text-maroon-900/40">
                           No transactions match these filters.
                         </td>
                       </tr>

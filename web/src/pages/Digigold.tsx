@@ -6,6 +6,7 @@ import { formatINR, formatGm, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
 import Gain from "../components/Gain";
+import WorthCard from "../components/WorthCard";
 
 interface AccountRow {
   member_id: string;
@@ -234,7 +235,7 @@ export default function Digigold() {
               <span className="text-sm font-normal text-maroon-900/40"> /gm</span>
             </p>
             <p className="text-xs text-maroon-900/40 mt-1">
-              {goldRate ? `as of ${formatDateTime(goldRate.capturedAt)}` : "not captured yet"}
+              {goldRate ? `excl. GST · as of ${formatDateTime(goldRate.capturedAt)}` : "not captured yet"}
             </p>
           </div>
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
@@ -247,16 +248,13 @@ export default function Digigold() {
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatGm(grandSoldGm)}</p>
             <p className="text-xs text-maroon-900/40 mt-1">worth {formatINR(grandSoldWorth)}</p>
           </div>
-          <div className="bg-gold-500 rounded-xl shadow-sm px-5 py-5">
-            <p className="text-xs font-semibold text-maroon-900/60 uppercase tracking-wider">Net Holdings</p>
-            <p className="text-3xl font-bold mt-2 text-maroon-900">{formatGm(grandNetGm)}</p>
-            <p className="text-xs text-maroon-900/60 mt-1">
-              worth now <span className="font-semibold text-maroon-900">{formatINR(grandCurrentWorth)}</span>
-            </p>
-            <p className="text-xs text-maroon-900/60 mt-0.5">
-              net paid {formatINR(grandNetWorth)} · <Gain current={grandCurrentWorth} paid={grandNetWorth} />
-            </p>
-          </div>
+          <WorthCard
+            label="Net Holdings Worth Now"
+            current={grandCurrentWorth}
+            paid={grandNetWorth}
+            gm={grandNetGm}
+            emptyText="no holdings"
+          />
         </div>
 
         {loading ? (
@@ -458,6 +456,7 @@ export default function Digigold() {
                                                 <th className="py-1 pr-4">Weight (gm)</th>
                                                 <th className="py-1 pr-4">Gold Worth</th>
                                                 <th className="py-1 pr-4">Price on Day</th>
+                                                <th className="py-1 pr-4">Current Price</th>
                                                 <th className="py-1 pr-4">Current Worth</th>
                                                 <th className="py-1 pr-4">Gain/Loss</th>
                                                 <th className="py-1 pr-4">Order ID</th>
@@ -470,6 +469,7 @@ export default function Digigold() {
                                                   <td className="py-1 pr-4">{r.weight_gm}</td>
                                                   <td className="py-1 pr-4">{formatINR(r.gold_worth)}</td>
                                                   <td className="py-1 pr-4">{formatINR(r.price_on_day)}</td>
+                                                  <td className="py-1 pr-4">{formatINR(goldRate?.rate)}</td>
                                                   <td className="py-1 pr-4">{formatINR(currentWorth(r.weight_gm, goldRate))}</td>
                                                   <td className="py-1 pr-4">
                                                     <Gain current={currentWorth(r.weight_gm, goldRate)} paid={r.gold_worth} />

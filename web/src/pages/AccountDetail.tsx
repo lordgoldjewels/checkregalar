@@ -184,8 +184,8 @@ export default function AccountDetail() {
   function exportDigigoldBuyCsv() {
     downloadCsv(
       `digigold-buy-${memberId}.csv`,
-      ["Buy Date", "Weight (gm)", "Gold Worth", "Price on Day", "Current Worth", "Order ID"],
-      digigoldBuys.map((r) => [formatDate(r.buy_date), r.weight_gm, r.gold_worth, r.price_on_day, currentWorth(r.weight_gm, goldRate), r.order_id])
+      ["Buy Date", "Weight (gm)", "Gold Worth", "Price on Day", "Current Price", "Current Worth", "Order ID"],
+      digigoldBuys.map((r) => [formatDate(r.buy_date), r.weight_gm, r.gold_worth, r.price_on_day, goldRate?.rate ?? null, currentWorth(r.weight_gm, goldRate), r.order_id])
     );
   }
 
@@ -431,6 +431,7 @@ export default function AccountDetail() {
                 <th className="px-4 py-2.5">Weight (gm)</th>
                 <th className="px-4 py-2.5">Gold Worth</th>
                 <th className="px-4 py-2.5">Price on Day</th>
+                <th className="px-4 py-2.5">Current Price</th>
                 <th className="px-4 py-2.5">Current Worth</th>
                 <th className="px-4 py-2.5">Gain/Loss</th>
                 <th className="px-4 py-2.5">Order ID</th>
@@ -443,6 +444,7 @@ export default function AccountDetail() {
                   <td className="px-4 py-2.5">{r.weight_gm}</td>
                   <td className="px-4 py-2.5">{formatINR(r.gold_worth)}</td>
                   <td className="px-4 py-2.5">{formatINR(r.price_on_day)}</td>
+                  <td className="px-4 py-2.5">{formatINR(goldRate?.rate)}</td>
                   <td className="px-4 py-2.5">{formatINR(currentWorth(r.weight_gm, goldRate))}</td>
                   <td className="px-4 py-2.5">
                     <Gain current={currentWorth(r.weight_gm, goldRate)} paid={r.gold_worth} />
@@ -451,7 +453,7 @@ export default function AccountDetail() {
                 </tr>
               ))}
               {digigoldBuys.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-maroon-900/40">No DigiGold purchases.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-maroon-900/40">No DigiGold purchases.</td></tr>
               )}
             </tbody>
           </table>

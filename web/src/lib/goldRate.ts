@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 
 export interface GoldRate {
-  rate: number; // ₹ per gram, incl. GST - the site buys and sells at this rate
+  rate: number; // ₹ per gram, excl. GST - home page "Today's Market Price"
   capturedAt: string;
 }
 
