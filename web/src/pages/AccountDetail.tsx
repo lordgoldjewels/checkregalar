@@ -4,6 +4,8 @@ import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
 import { formatINR, formatNumber, formatDateTime, formatDate } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
+import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
+import Gain from "../components/Gain";
 
 interface Account {
   member_id: string;
@@ -76,6 +78,7 @@ export default function AccountDetail() {
   const [breakdowns, setBreakdowns] = useState<Map<number, BreakdownRow[]>>(new Map());
   const [pins, setPins] = useState<PromotionalIncentivePinRow[]>([]);
   const [digigoldBuys, setDigigoldBuys] = useState<DigigoldBuyRow[]>([]);
+  const [goldRate, setGoldRate] = useState<GoldRate | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
 
@@ -86,7 +89,7 @@ export default function AccountDetail() {
 
   async function fetchData(id: string) {
     setLoading(true);
-    const [accountRes, snapshotsRes, siRes, tsRes, pinsRes, digigoldRes] = await Promise.all([
+    const [accountRes, snapshotsRes, siRes, tsRes, pinsRes, digigoldRes, rate] = await Promise.all([
       supabase.from("accounts").select("member_id, name, phone_number, upline_member_id").eq("member_id", id).maybeSingle(),
       supabase.from("dashboard_snapshots").select("*").eq("account_id", id).order("captured_at", { ascending: false }),
       supabase.from("sales_incentive").select("*").eq("account_id", id).order("bill_date", { ascending: false }),
@@ -101,6 +104,7 @@ export default function AccountDetail() {
         .select("order_id, buy_date, weight_gm, gold_worth, price_on_day")
         .eq("account_id", id)
         .order("buy_date", { ascending: false }),
+      fetchLatestGoldRate(),
     ]);
 
     setAccount((accountRes.data as Account) ?? null);
@@ -110,6 +114,7 @@ export default function AccountDetail() {
     setTurnoverSalary(tsRows);
     setPins((pinsRes.data as PromotionalIncentivePinRow[]) ?? []);
     setDigigoldBuys((digigoldRes.data as DigigoldBuyRow[]) ?? []);
+    setGoldRate(rate);
 
     if (tsRows.length > 0) {
       const { data: breakdownData } = await supabase
@@ -179,8 +184,8 @@ export default function AccountDetail() {
   function exportDigigoldBuyCsv() {
     downloadCsv(
       `digigold-buy-${memberId}.csv`,
-      ["Buy Date", "Weight (gm)", "Gold Worth", "Price on Day", "Order ID"],
-      digigoldBuys.map((r) => [formatDate(r.buy_date), r.weight_gm, r.gold_worth, r.price_on_day, r.order_id])
+      ["Buy Date", "Weight (gm)", "Gold Worth", "Price on Day", "Current Worth", "Order ID"],
+      digigoldBuys.map((r) => [formatDate(r.buy_date), r.weight_gm, r.gold_worth, r.price_on_day, currentWorth(r.weight_gm, goldRate), r.order_id])
     );
   }
 
@@ -426,6 +431,8 @@ export default function AccountDetail() {
                 <th className="px-4 py-2.5">Weight (gm)</th>
                 <th className="px-4 py-2.5">Gold Worth</th>
                 <th className="px-4 py-2.5">Price on Day</th>
+                <th className="px-4 py-2.5">Current Worth</th>
+                <th className="px-4 py-2.5">Gain/Loss</th>
                 <th className="px-4 py-2.5">Order ID</th>
               </tr>
             </thead>
@@ -436,11 +443,15 @@ export default function AccountDetail() {
                   <td className="px-4 py-2.5">{r.weight_gm}</td>
                   <td className="px-4 py-2.5">{formatINR(r.gold_worth)}</td>
                   <td className="px-4 py-2.5">{formatINR(r.price_on_day)}</td>
+                  <td className="px-4 py-2.5">{formatINR(currentWorth(r.weight_gm, goldRate))}</td>
+                  <td className="px-4 py-2.5">
+                    <Gain current={currentWorth(r.weight_gm, goldRate)} paid={r.gold_worth} />
+                  </td>
                   <td className="px-4 py-2.5 font-mono text-xs">{r.order_id}</td>
                 </tr>
               ))}
               {digigoldBuys.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-maroon-900/40">No DigiGold purchases.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-maroon-900/40">No DigiGold purchases.</td></tr>
               )}
             </tbody>
           </table>

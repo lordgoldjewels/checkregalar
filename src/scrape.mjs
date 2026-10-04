@@ -8,6 +8,7 @@ import { scrapeTurnoverSalary } from "./scrapers/turnoverSalary.mjs";
 import { scrapePromotionalIncentive } from "./scrapers/promotionalIncentive.mjs";
 import { scrapeDigigoldBuy } from "./scrapers/digigoldBuy.mjs";
 import { scrapeDigigoldSell } from "./scrapers/digigoldSell.mjs";
+import { scrapeGoldRate } from "./scrapers/goldRate.mjs";
 import { captureFailure } from "./debug.mjs";
 import {
   dbEnabled,
@@ -21,6 +22,7 @@ import {
   upsertPromotionalIncentivePins,
   upsertDigigoldBuy,
   upsertDigigoldSell,
+  insertGoldRate,
   startScrapeRun,
   finishScrapeRun,
   getNotificationSettings,
@@ -57,6 +59,21 @@ const headless = process.argv.includes("--headless");
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
 let hadFailure = false;
+
+// The rate is public and the same for every account, so fetch it once per
+// run in a logged-out context. Best effort: never let it block the scrape.
+{
+  const { browser, context } = await launchContext({ headless });
+  try {
+    const rate = await scrapeGoldRate(await context.newPage());
+    await insertGoldRate(rate);
+    console.log(`Gold rate: ₹${rate}/gm`);
+  } catch (err) {
+    console.warn(`Gold rate capture failed: ${err.message}`);
+  } finally {
+    await browser.close();
+  }
+}
 
 const phoneSessions = await listPhoneSessions();
 

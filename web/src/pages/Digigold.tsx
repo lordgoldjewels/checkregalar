@@ -2,8 +2,10 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
-import { formatINR, formatGm, formatDate } from "../lib/format";
+import { formatINR, formatGm, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
+import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
+import Gain from "../components/Gain";
 
 interface AccountRow {
   member_id: string;
@@ -65,6 +67,7 @@ export default function Digigold() {
   const [sellDetails, setSellDetails] = useState<Map<string, SellDetail[]>>(new Map());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [expandedAccountMonths, setExpandedAccountMonths] = useState<Set<string>>(new Set());
+  const [goldRate, setGoldRate] = useState<GoldRate | null>(null);
   const [loading, setLoading] = useState(true);
 
   function toggleMonth(key: string) {
@@ -106,7 +109,7 @@ export default function Digigold() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, buyRes, sellRes] = await Promise.all([
+    const [accountsRes, buyRes, sellRes, rate] = await Promise.all([
       supabase.from("accounts").select("member_id, name").order("name"),
       supabase
         .from("digigold_buy_transactions")
@@ -114,6 +117,7 @@ export default function Digigold() {
       supabase
         .from("digigold_sell_transactions")
         .select("account_id, transaction_remarks, sell_date, weight_gm, gold_worth, status"),
+      fetchLatestGoldRate(),
     ]);
 
     const byAccount = new Map<string, DigigoldTotals>();
@@ -178,6 +182,7 @@ export default function Digigold() {
     setMonthlyByAccount(byMonthByAccount);
     setBuyDetails(buyByMonthAccount);
     setSellDetails(sellByMonthAccount);
+    setGoldRate(rate);
     setLoading(false);
   }
 
@@ -187,16 +192,17 @@ export default function Digigold() {
   const grandSoldWorth = [...totals.values()].reduce((s, t) => s + t.soldWorth, 0);
   const grandNetGm = grandBoughtGm - grandSoldGm;
   const grandNetWorth = grandBoughtWorth - grandSoldWorth;
+  const grandCurrentWorth = currentWorth(grandNetGm, goldRate);
 
   const monthKeys = [...monthlyTotals.keys()].sort().reverse();
 
   function exportByAccountCsv() {
     downloadCsv(
       "digigold-by-account.csv",
-      ["Name", "Member ID", "Bought (gm)", "Bought Worth", "Sold (gm)", "Sold Worth", "Net (gm)", "Net Worth"],
+      ["Name", "Member ID", "Bought (gm)", "Bought Worth", "Sold (gm)", "Sold Worth", "Net (gm)", "Net Worth", "Current Worth"],
       accounts.map((a) => {
         const t = totals.get(a.member_id) ?? emptyTotals();
-        return [a.name, a.member_id, t.boughtGm, t.boughtWorth, t.soldGm, t.soldWorth, netGm(t), netWorth(t)];
+        return [a.name, a.member_id, t.boughtGm, t.boughtWorth, t.soldGm, t.soldWorth, netGm(t), netWorth(t), currentWorth(netGm(t), goldRate)];
       })
     );
   }
@@ -204,10 +210,10 @@ export default function Digigold() {
   function exportByMonthCsv() {
     downloadCsv(
       "digigold-by-month.csv",
-      ["Month", "Bought (gm)", "Bought Worth", "Sold (gm)", "Sold Worth", "Net (gm)", "Net Worth"],
+      ["Month", "Bought (gm)", "Bought Worth", "Sold (gm)", "Sold Worth", "Net (gm)", "Net Worth", "Current Worth"],
       monthKeys.map((key) => {
         const t = monthlyTotals.get(key)!;
-        return [monthLabel(key), t.boughtGm, t.boughtWorth, t.soldGm, t.soldWorth, netGm(t), netWorth(t)];
+        return [monthLabel(key), t.boughtGm, t.boughtWorth, t.soldGm, t.soldWorth, netGm(t), netWorth(t), currentWorth(netGm(t), goldRate)];
       })
     );
   }
@@ -220,7 +226,17 @@ export default function Digigold() {
           <p className="text-sm text-maroon-900/50 mt-0.5">Buy and Sell transaction history, across all accounts</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+          <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
+            <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Gold Rate</p>
+            <p className="text-3xl font-bold mt-2 text-maroon-900">
+              {goldRate ? formatINR(goldRate.rate) : "—"}
+              <span className="text-sm font-normal text-maroon-900/40"> /gm</span>
+            </p>
+            <p className="text-xs text-maroon-900/40 mt-1">
+              {goldRate ? `as of ${formatDateTime(goldRate.capturedAt)}` : "not captured yet"}
+            </p>
+          </div>
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Bought</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatGm(grandBoughtGm)}</p>
@@ -234,7 +250,12 @@ export default function Digigold() {
           <div className="bg-gold-500 rounded-xl shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/60 uppercase tracking-wider">Net Holdings</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatGm(grandNetGm)}</p>
-            <p className="text-xs text-maroon-900/60 mt-1">worth {formatINR(grandNetWorth)}</p>
+            <p className="text-xs text-maroon-900/60 mt-1">
+              worth now <span className="font-semibold text-maroon-900">{formatINR(grandCurrentWorth)}</span>
+            </p>
+            <p className="text-xs text-maroon-900/60 mt-0.5">
+              net paid {formatINR(grandNetWorth)} · <Gain current={grandCurrentWorth} paid={grandNetWorth} />
+            </p>
           </div>
         </div>
 
@@ -261,6 +282,7 @@ export default function Digigold() {
                     <th className="px-5 py-3">Bought</th>
                     <th className="px-5 py-3">Sold</th>
                     <th className="px-5 py-3">Net</th>
+                    <th className="px-5 py-3">Current Worth</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-maroon-50">
@@ -282,12 +304,18 @@ export default function Digigold() {
                         <td className="px-5 py-3 font-semibold">
                           {formatGm(netGm(t))} <span className="text-maroon-900/40 font-normal">· {formatINR(netWorth(t))}</span>
                         </td>
+                        <td className="px-5 py-3">
+                          <span className="font-semibold">{formatINR(currentWorth(netGm(t), goldRate))}</span>
+                          <span className="block text-xs">
+                            <Gain current={currentWorth(netGm(t), goldRate)} paid={netWorth(t)} />
+                          </span>
+                        </td>
                       </tr>
                     );
                   })}
                   {accounts.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-5 py-8 text-center text-maroon-900/40">
+                      <td colSpan={5} className="px-5 py-8 text-center text-maroon-900/40">
                         No accounts yet.
                       </td>
                     </tr>
@@ -305,6 +333,12 @@ export default function Digigold() {
                       </td>
                       <td className="px-5 py-3">
                         {formatGm(grandNetGm)} <span className="text-maroon-900/50 font-normal">· {formatINR(grandNetWorth)}</span>
+                      </td>
+                      <td className="px-5 py-3">
+                        {formatINR(grandCurrentWorth)}
+                        <span className="block text-xs font-normal">
+                          <Gain current={grandCurrentWorth} paid={grandNetWorth} />
+                        </span>
                       </td>
                     </tr>
                   </tfoot>
@@ -343,6 +377,7 @@ export default function Digigold() {
                     <th className="px-5 py-3">Bought</th>
                     <th className="px-5 py-3">Sold</th>
                     <th className="px-5 py-3">Net</th>
+                    <th className="px-5 py-3">Current Worth</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>
@@ -365,6 +400,7 @@ export default function Digigold() {
                           <td className="px-5 py-3 font-semibold">
                             {formatGm(netGm(t))} <span className="text-maroon-900/40 font-normal">· {formatINR(netWorth(t))}</span>
                           </td>
+                          <td className="px-5 py-3">{formatINR(currentWorth(netGm(t), goldRate))}</td>
                           <td className="px-5 py-3 text-right">
                             <button
                               onClick={() => toggleMonth(key)}
@@ -397,6 +433,7 @@ export default function Digigold() {
                                   <td className="px-4 py-2 text-sm font-semibold">
                                     {formatGm(netGm(at))} <span className="text-maroon-900/40 font-normal">· {formatINR(netWorth(at))}</span>
                                   </td>
+                                  <td className="px-4 py-2 text-sm">{formatINR(currentWorth(netGm(at), goldRate))}</td>
                                   <td className="px-4 py-2 text-right">
                                     <button
                                       onClick={() => toggleAccountMonth(amKey)}
@@ -408,7 +445,7 @@ export default function Digigold() {
                                 </tr>
                                 {expandedAccountMonths.has(amKey) && (
                                   <tr>
-                                    <td colSpan={5} className="px-4 py-3 bg-maroon-100/40">
+                                    <td colSpan={6} className="px-4 py-3 bg-maroon-100/40">
                                       {buys.length > 0 && (
                                         <div className="mb-3">
                                           <p className="text-xs font-semibold text-maroon-900/50 uppercase tracking-wider mb-1">
@@ -421,6 +458,8 @@ export default function Digigold() {
                                                 <th className="py-1 pr-4">Weight (gm)</th>
                                                 <th className="py-1 pr-4">Gold Worth</th>
                                                 <th className="py-1 pr-4">Price on Day</th>
+                                                <th className="py-1 pr-4">Current Worth</th>
+                                                <th className="py-1 pr-4">Gain/Loss</th>
                                                 <th className="py-1 pr-4">Order ID</th>
                                               </tr>
                                             </thead>
@@ -431,6 +470,10 @@ export default function Digigold() {
                                                   <td className="py-1 pr-4">{r.weight_gm}</td>
                                                   <td className="py-1 pr-4">{formatINR(r.gold_worth)}</td>
                                                   <td className="py-1 pr-4">{formatINR(r.price_on_day)}</td>
+                                                  <td className="py-1 pr-4">{formatINR(currentWorth(r.weight_gm, goldRate))}</td>
+                                                  <td className="py-1 pr-4">
+                                                    <Gain current={currentWorth(r.weight_gm, goldRate)} paid={r.gold_worth} />
+                                                  </td>
                                                   <td className="py-1 pr-4 font-mono">{r.order_id}</td>
                                                 </tr>
                                               ))}
@@ -481,7 +524,7 @@ export default function Digigold() {
                   })}
                   {monthKeys.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-5 py-8 text-center text-maroon-900/40">
+                      <td colSpan={6} className="px-5 py-8 text-center text-maroon-900/40">
                         No Digi-Gold data yet.
                       </td>
                     </tr>

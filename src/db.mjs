@@ -347,6 +347,12 @@ export async function upsertTurnoverSalary(accountId, rows) {
   return changes;
 }
 
+export async function insertGoldRate(ratePerGm) {
+  if (!dbEnabled) return;
+  const { error } = await supabase.from("gold_rates").insert({ rate_per_gm: ratePerGm });
+  if (error) throw new Error(`insertGoldRate(${ratePerGm}): ${error.message}`);
+}
+
 export async function startScrapeRun(phone) {
   if (!dbEnabled) return null;
   const { data, error } = await supabase

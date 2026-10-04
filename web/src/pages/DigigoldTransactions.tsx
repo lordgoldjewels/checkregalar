@@ -4,6 +4,8 @@ import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
 import { formatINR, formatGm, formatDate } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
+import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
+import Gain from "../components/Gain";
 
 interface AccountRow {
   member_id: string;
@@ -52,7 +54,12 @@ function summarize(list: CombinedTransaction[]) {
   );
 }
 
-function transactionRow(t: CombinedTransaction, dense: boolean) {
+// Current worth only means something for a buy - a sell's gold is gone.
+function buyCurrentWorth(t: CombinedTransaction, rate: GoldRate | null) {
+  return t.type === "Buy" ? currentWorth(t.weightGm, rate) : null;
+}
+
+function transactionRow(t: CombinedTransaction, dense: boolean, rate: GoldRate | null) {
   const pad = dense ? "py-1 pr-4" : "px-5 py-3";
   return (
     <tr key={t.key} className={dense ? "" : "hover:bg-maroon-50/50"}>
@@ -68,13 +75,25 @@ function transactionRow(t: CombinedTransaction, dense: boolean) {
       <td className={pad}>{formatGm(t.weightGm)}</td>
       <td className={pad}>{formatINR(t.worth)}</td>
       <td className={pad}>{formatINR(t.priceOnDay)}</td>
+      <td className={pad}>
+        {t.type === "Buy" ? (
+          <>
+            {formatINR(buyCurrentWorth(t, rate))}{" "}
+            <span className="text-xs">
+              <Gain current={buyCurrentWorth(t, rate)} paid={t.worth} />
+            </span>
+          </>
+        ) : (
+          "—"
+        )}
+      </td>
       <td className={pad}>{t.status ?? "—"}</td>
       <td className={`${pad} font-mono ${dense ? "" : "text-xs"}`}>{t.reference}</td>
     </tr>
   );
 }
 
-function DetailTable({ rows }: { rows: CombinedTransaction[] }) {
+function DetailTable({ rows, rate }: { rows: CombinedTransaction[]; rate: GoldRate | null }) {
   return (
     <table className="w-full text-xs">
       <thead>
@@ -85,11 +104,12 @@ function DetailTable({ rows }: { rows: CombinedTransaction[] }) {
           <th className="py-1 pr-4">Weight (gm)</th>
           <th className="py-1 pr-4">Worth</th>
           <th className="py-1 pr-4">Price on Day</th>
+          <th className="py-1 pr-4">Current Worth</th>
           <th className="py-1 pr-4">Status</th>
           <th className="py-1 pr-4">Reference</th>
         </tr>
       </thead>
-      <tbody>{rows.map((t) => transactionRow(t, true))}</tbody>
+      <tbody>{rows.map((t) => transactionRow(t, true, rate))}</tbody>
     </table>
   );
 }
@@ -97,6 +117,7 @@ function DetailTable({ rows }: { rows: CombinedTransaction[] }) {
 export default function DigigoldTransactions() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [transactions, setTransactions] = useState<CombinedTransaction[]>([]);
+  const [goldRate, setGoldRate] = useState<GoldRate | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [filterAccount, setFilterAccount] = useState("");
@@ -155,7 +176,7 @@ export default function DigigoldTransactions() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, buyRes, sellRes] = await Promise.all([
+    const [accountsRes, buyRes, sellRes, rate] = await Promise.all([
       supabase.from("accounts").select("member_id, name").order("name"),
       supabase
         .from("digigold_buy_transactions")
@@ -163,6 +184,7 @@ export default function DigigoldTransactions() {
       supabase
         .from("digigold_sell_transactions")
         .select("account_id, transaction_remarks, sell_date, weight_gm, gold_worth, status, occurrence"),
+      fetchLatestGoldRate(),
     ]);
 
     const accountList = (accountsRes.data as AccountRow[]) ?? [];
@@ -222,6 +244,7 @@ export default function DigigoldTransactions() {
 
     setAccounts(accountList);
     setTransactions(combined);
+    setGoldRate(rate);
     setLoading(false);
   }
 
@@ -277,8 +300,8 @@ export default function DigigoldTransactions() {
   function exportCsv() {
     downloadCsv(
       "digigold-transactions.csv",
-      ["Date", "Account", "Type", "Weight (gm)", "Worth", "Price on Day", "Status", "Reference"],
-      filtered.map((t) => [formatDate(t.date), t.accountName, t.type, t.weightGm, t.worth, t.priceOnDay, t.status, t.reference])
+      ["Date", "Account", "Type", "Weight (gm)", "Worth", "Price on Day", "Current Worth", "Status", "Reference"],
+      filtered.map((t) => [formatDate(t.date), t.accountName, t.type, t.weightGm, t.worth, t.priceOnDay, buyCurrentWorth(t, goldRate), t.status, t.reference])
     );
   }
 
@@ -399,15 +422,16 @@ export default function DigigoldTransactions() {
                       <th className="px-5 py-3">Weight (gm)</th>
                       <th className="px-5 py-3">Worth</th>
                       <th className="px-5 py-3">Price on Day</th>
+                      <th className="px-5 py-3">Current Worth</th>
                       <th className="px-5 py-3">Status</th>
                       <th className="px-5 py-3">Reference</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-maroon-50">
-                    {filtered.map((t) => transactionRow(t, false))}
+                    {filtered.map((t) => transactionRow(t, false, goldRate))}
                     {filtered.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-5 py-8 text-center text-maroon-900/40">
+                        <td colSpan={9} className="px-5 py-8 text-center text-maroon-900/40">
                           No transactions match these filters.
                         </td>
                       </tr>
@@ -448,7 +472,7 @@ export default function DigigoldTransactions() {
                           {expandedGroups.has(key) && (
                             <tr>
                               <td colSpan={5} className="px-4 py-3 bg-maroon-50/40">
-                                <DetailTable rows={list} />
+                                <DetailTable rows={list} rate={goldRate} />
                               </td>
                             </tr>
                           )}
@@ -502,7 +526,7 @@ export default function DigigoldTransactions() {
                           {expandedGroups.has(accountId) && (
                             <tr>
                               <td colSpan={5} className="px-4 py-3 bg-maroon-50/40">
-                                <DetailTable rows={list} />
+                                <DetailTable rows={list} rate={goldRate} />
                               </td>
                             </tr>
                           )}
@@ -580,7 +604,7 @@ export default function DigigoldTransactions() {
                                   {expandedSubgroups.has(subKey) && (
                                     <tr>
                                       <td colSpan={5} className="px-4 py-3 bg-maroon-100/40">
-                                        <DetailTable rows={accList} />
+                                        <DetailTable rows={accList} rate={goldRate} />
                                       </td>
                                     </tr>
                                   )}
