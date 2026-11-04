@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "login": "node src/login.mjs",
+    "login:api": "node src/login-api.mjs",
     "scrape": "node src/scrape.mjs",
     "scrape:headless": "node src/scrape.mjs --headless",
+    "scrape:api": "node src/scrape-api.mjs",
     "reconcile": "node src/reconcile.mjs"
   },
   "dependencies": {

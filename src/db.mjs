@@ -347,6 +347,101 @@ export async function upsertTurnoverSalary(accountId, rows) {
   return changes;
 }
 
+/**
+ * Upserts the wallet snapshot in place (one row per account - current state,
+ * like dashboard_snapshots) and returns a change descriptor when cash_balance
+ * moved, so the caller can alert. Needs the wallet_snapshots table (see
+ * API-MIGRATION.md for the CREATE TABLE).
+ */
+export async function upsertWalletSnapshot(accountId, capturedAt, wallet) {
+  if (!dbEnabled) return null;
+
+  const { data: prev, error: fetchError } = await supabase
+    .from("wallet_snapshots")
+    .select("cash_balance")
+    .eq("account_id", accountId)
+    .maybeSingle();
+  if (fetchError) throw new Error(`upsertWalletSnapshot(${accountId}) fetch: ${fetchError.message}`);
+  const previousCash = prev ? Number(prev.cash_balance) : null;
+
+  const { error } = await supabase.from("wallet_snapshots").upsert(
+    {
+      account_id: accountId,
+      captured_at: capturedAt,
+      currency_code: wallet.currencyCode,
+      cash_balance: parseAmount(wallet.cashBalance),
+      epin_balance: parseAmount(wallet.epinBalance),
+      coupon_balance: parseAmount(wallet.couponBalance),
+      earning_total: parseAmount(wallet.earningTotal),
+      ic_paid: parseAmount(wallet.streams.icPaid),
+      ic_pending: parseAmount(wallet.streams.icPending),
+      gap_paid: parseAmount(wallet.streams.gapPaid),
+      gap_pending: parseAmount(wallet.streams.gapPending),
+      cbc_paid: parseAmount(wallet.streams.cbcPaid),
+      cbc_pending: parseAmount(wallet.streams.cbcPending),
+      reseller_paid: parseAmount(wallet.streams.resellerPaid),
+      settlement_paid: parseAmount(wallet.streams.settlementPaid),
+      settlement_pending: parseAmount(wallet.streams.settlementPending),
+      bonds_active: wallet.bonds.active ?? null,
+      bonds_total: wallet.bonds.total ?? null,
+      bonds_invested: parseAmount(wallet.bonds.invested),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "account_id" }
+  );
+  if (error) throw new Error(`upsertWalletSnapshot(${accountId}): ${error.message}`);
+
+  const current = wallet.cashBalance == null ? null : Number(wallet.cashBalance);
+  if (previousCash === null && current !== null) return { isNew: true, previous: null, current, delta: null };
+  if (previousCash !== null && current !== null && current !== previousCash) {
+    return { isNew: false, previous: previousCash, current, delta: current - previousCash };
+  }
+  return null;
+}
+
+/**
+ * Upserts wallet withdrawal requests and returns the ones worth flagging: a
+ * new request, or one whose status changed (e.g. pending -> disbursed).
+ * Needs the wallet_withdrawals table
+ * (supabase/migrations/20261104190000_wallet_withdrawals.sql).
+ */
+export async function upsertWalletWithdrawals(accountId, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("wallet_withdrawals")
+    .select("withdrawal_id, status")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertWalletWithdrawals(${accountId}) fetch: ${fetchError.message}`);
+  const existingById = new Map((existing ?? []).map((r) => [Number(r.withdrawal_id), r.status]));
+
+  const records = dedupeByKey(
+    rows.map((r) => ({
+      account_id: accountId,
+      withdrawal_id: r.withdrawalId,
+      branch: r.branch,
+      amount: parseAmount(r.amount),
+      status: r.status,
+      disbursal_mode: r.disbursalMode,
+      requested_at: r.requestedAt,
+      disbursed_at: r.disbursedAt,
+      updated_at: new Date().toISOString(),
+    })),
+    (r) => r.withdrawal_id
+  );
+  const { error } = await supabase
+    .from("wallet_withdrawals")
+    .upsert(records, { onConflict: "account_id,withdrawal_id" });
+  if (error) throw new Error(`upsertWalletWithdrawals(${accountId}): ${error.message}`);
+
+  return records.flatMap((r) => {
+    if (!existingById.has(Number(r.withdrawal_id))) return [{ ...r, isNew: true, previousStatus: null }];
+    const previousStatus = existingById.get(Number(r.withdrawal_id));
+    if (previousStatus !== r.status) return [{ ...r, isNew: false, previousStatus }];
+    return [];
+  });
+}
+
 export async function insertGoldRate(ratePerGm) {
   if (!dbEnabled) return;
   const { error } = await supabase.from("gold_rates").insert({ rate_per_gm: ratePerGm });
@@ -375,7 +470,7 @@ export async function finishScrapeRun(runId, { status, accountsScraped, errors }
 
 const ALL_NOTIFICATION_TYPES = [
   "sales_incentive", "turnover_salary", "promotional_incentive",
-  "digigold_buy", "digigold_sell",
+  "digigold_buy", "digigold_sell", "wallet_balance",
   "scrape_crashed", "failed_to_load_home", "session_expired",
   "account_scrape_failure", "partial_run_summary",
 ];
@@ -388,4 +483,38 @@ export async function getNotificationSettings() {
   const { data } = await supabase.from("notification_settings").select("type, enabled");
   for (const row of data ?? []) settings[row.type] = row.enabled;
   return settings;
+}
+
+// --- New-API token storage (reuses phone_sessions; needs a one-time migration:
+//     ALTER TABLE phone_sessions ADD COLUMN IF NOT EXISTS api_token text; ) ---
+
+export async function getPhoneApiToken(phone) {
+  requireDb();
+  const { data, error } = await supabase
+    .from("phone_sessions")
+    .select("api_token, status")
+    .eq("phone_number", phone)
+    .maybeSingle();
+  if (error) throw new Error(`getPhoneApiToken(${phone}): ${error.message}`);
+  return data;
+}
+
+export async function savePhoneApiToken(phone, apiToken, status = "active") {
+  requireDb();
+  const { error } = await supabase
+    .from("phone_sessions")
+    .upsert(
+      { phone_number: phone, api_token: apiToken, status, updated_at: new Date().toISOString() },
+      { onConflict: "phone_number" }
+    );
+  if (error) throw new Error(`savePhoneApiToken(${phone}): ${error.message}`);
+}
+
+export async function markPhoneSessionExpired(phone) {
+  requireDb();
+  const { error } = await supabase
+    .from("phone_sessions")
+    .update({ status: "expired", updated_at: new Date().toISOString() })
+    .eq("phone_number", phone);
+  if (error) throw new Error(`markPhoneSessionExpired(${phone}): ${error.message}`);
 }

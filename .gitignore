@@ -4,3 +4,6 @@ data/
 .playwright-mcp/
 .env
 .DS_Store
+
+# Supabase CLI local link state
+supabase/.temp/

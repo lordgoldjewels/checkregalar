@@ -1,0 +1,33 @@
+name: Scrape (API)
+
+on:
+  # Same dispatch model as scrape.yml: triggered by a pg_cron job in Supabase
+  # calling this workflow's dispatch API, not GitHub's `schedule:` trigger
+  # (which fires hours late for high-frequency crons). To cut over from the
+  # Playwright scrape, point the pg_cron job at this workflow instead of
+  # scrape.yml. They can also run in parallel during the transition.
+  workflow_dispatch: {}
+
+jobs:
+  scrape-api:
+    runs-on: ubuntu-latest
+    # No browser to launch, so this is far lighter/faster than the Playwright job.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # No `npx playwright install` - the API scrape makes plain HTTPS calls
+      # (global fetch, no Chromium).
+      - run: npm run scrape:api
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
