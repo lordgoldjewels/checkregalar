@@ -27,3 +27,6 @@ export function tbpNet(row: { net_total: number | null; total_tb_salary: number 
   if (row.net_total != null) return Number(row.net_total);
   return Number(row.total_tb_salary ?? 0) * TBP_NET_RATE;
 }
+
+/** Withdrawal statuses where the money never left the wallet. */
+export const FAILED_WITHDRAWAL_STATUSES = ["rejected", "cancelled", "canceled", "failed"];

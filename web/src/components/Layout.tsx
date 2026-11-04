@@ -12,15 +12,23 @@ const NAV = [
     icon: <><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3 3-5 7-5s7 2 7 5" /></>,
   },
   {
-    to: "/income", label: "Income", end: false,
+    to: "/income", label: "Income", end: true,
     icon: <path d="M12 2v20M17 6.5c0-1.9-2.2-3-5-3s-5 1.3-5 3 2.2 3 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3" />,
+  },
+  {
+    to: "/income/transactions", label: "Income Transactions", end: false,
+    icon: <><path d="M4 6h16M4 12h16M4 18h10" /></>,
+  },
+  {
+    to: "/wallet", label: "Wallet", end: false,
+    icon: <><path d="M4 7a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z" /><path d="M16 12h4M4 9h16" /></>,
   },
   {
     to: "/digigold", label: "Digi-Gold", end: true,
     icon: <><circle cx="12" cy="12" r="8" /><path d="M12 7v10M8.5 9.5h5.25a2 2 0 010 4H8.5" /></>,
   },
   {
-    to: "/digigold/transactions", label: "All Transactions", end: false,
+    to: "/digigold/transactions", label: "Gold Transactions", end: false,
     icon: <><path d="M4 6h16M4 12h16M4 18h10" /></>,
   },
   {

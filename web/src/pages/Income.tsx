@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
 import { formatINR, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
-import { SI_PAYOUT_RATE, PROMO_PAYOUT_RATE, PAID_PIN_STATUSES, UNPAID_PIN_STATUSES, tbpNet } from "../lib/income";
+import { SI_PAYOUT_RATE, PROMO_PAYOUT_RATE, PAID_PIN_STATUSES, UNPAID_PIN_STATUSES, FAILED_WITHDRAWAL_STATUSES, tbpNet } from "../lib/income";
 
 interface AccountRow {
   member_id: string;
@@ -22,6 +22,13 @@ interface WalletRow {
   account_id: string;
   cash_balance: number | null;
   captured_at: string;
+}
+
+interface WithdrawalRow {
+  account_id: string;
+  amount: number | null;
+  status: string | null;
+  requested_at: string | null;
 }
 
 interface PendingPins {
@@ -79,6 +86,7 @@ export default function Income() {
   const [expandedAccountMonths, setExpandedAccountMonths] = useState<Set<string>>(new Set());
   const [wallets, setWallets]             = useState<Map<string, WalletRow>>(new Map());
   const [pendingPins, setPendingPins]     = useState<Map<string, PendingPins>>(new Map());
+  const [withdrawals, setWithdrawals]     = useState<WithdrawalRow[]>([]);
   const [loading, setLoading]             = useState(true);
 
   function toggleMonth(key: string) {
@@ -120,7 +128,7 @@ export default function Income() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, siRes, tsRes, piRes, pendingRes, walletRes] = await Promise.all([
+    const [accountsRes, siRes, tsRes, piRes, pendingRes, walletRes, withdrawalRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name").order("name"),
       supabase
         .from("sales_incentive")
@@ -133,6 +141,7 @@ export default function Income() {
       supabase.from("promotional_incentive_pins").select("account_id, amount").in("status", UNPAID_PIN_STATUSES),
       // Written by the API scraper; empty (or unreadable) just hides the wallet figures.
       supabase.from("wallet_snapshots").select("account_id, cash_balance, captured_at"),
+      supabase.from("wallet_withdrawals").select("account_id, amount, status, requested_at"),
     ]);
 
     const tsRows = (tsRes.data as (TurnoverSalaryDetail & { id: number; account_id: string; month: string })[]) ?? [];
@@ -235,6 +244,7 @@ export default function Income() {
     }
     setPendingPins(pending);
     setWallets(new Map(((walletRes.data as WalletRow[]) ?? []).map((w) => [w.account_id, w])));
+    setWithdrawals((withdrawalRes.data as WithdrawalRow[]) ?? []);
     setLoading(false);
   }
 
@@ -254,10 +264,22 @@ export default function Income() {
     const t = walletMonth ? monthlyByAccount.get(walletMonth)?.get(accountId) : undefined;
     return t ? totalNetOf(t) : 0;
   };
+  // Money withdrawn this month left the wallet, so wallet + withdrawn = month net.
+  const withdrawnThisMonthOf = (accountId: string) =>
+    withdrawals
+      .filter(
+        (w) =>
+          w.account_id === accountId &&
+          walletMonth != null &&
+          (w.requested_at ?? "").slice(0, 7) === walletMonth &&
+          !FAILED_WITHDRAWAL_STATUSES.includes(String(w.status ?? "").toLowerCase())
+      )
+      .reduce((sum, w) => sum + Number(w.amount ?? 0), 0);
   const walletMatches = (accountId: string) => {
     const w = wallets.get(accountId);
-    return w != null && Math.abs(Number(w.cash_balance ?? 0) - monthNetOf(accountId)) < 1;
+    return w != null && Math.abs(Number(w.cash_balance ?? 0) + withdrawnThisMonthOf(accountId) - monthNetOf(accountId)) < 1;
   };
+  const grandWithdrawnThisMonth = accounts.reduce((sum, a) => sum + withdrawnThisMonthOf(a.member_id), 0);
   const grandPendingPins = [...pendingPins.values()].reduce((a, p) => ({ count: a.count + p.count, face: a.face + p.face }), { count: 0, face: 0 });
 
   const grandSalesIncentiveGross = [...totals.values()].reduce((s, t) => s + t.salesIncentiveGross, 0);
@@ -302,7 +324,12 @@ export default function Income() {
     <Layout>
       <div className="px-4 sm:px-8 py-6 sm:py-8">
         <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl font-bold text-maroon-900">Income</h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold text-maroon-900">Income</h1>
+            <Link to="/income/transactions" className="text-sm font-medium text-maroon-700 hover:underline">
+              All income transactions →
+            </Link>
+          </div>
           <p className="text-sm text-maroon-900/50 mt-0.5">What is actually paid out: Sales Incentive less 10% (TDS 5% + service 5%), Turnover Salary less 10%, Promotional Incentive pins at 50%</p>
         </div>
 
@@ -335,7 +362,7 @@ export default function Income() {
             <p className="text-3xl font-bold mt-2 text-maroon-900">{walletList.length ? formatINR(grandWallet) : "—"}</p>
             <p className="text-xs text-maroon-900/40 mt-1">
               {walletCapturedAt
-                ? <>as of {formatDateTime(walletCapturedAt)} &middot; this month&apos;s credits after deductions</>
+                ? <>as of {formatDateTime(walletCapturedAt)} &middot; withdrawn this month {formatINR(grandWithdrawnThisMonth)}</>
                 : "not captured yet"}
             </p>
           </div>
@@ -400,9 +427,14 @@ export default function Income() {
                           {wallets.has(a.member_id) ? (
                             <>
                               {formatINR(wallets.get(a.member_id)!.cash_balance)}
+                              {withdrawnThisMonthOf(a.member_id) > 0 && (
+                                <span className="block text-xs text-maroon-900/50">
+                                  + withdrawn {formatINR(withdrawnThisMonthOf(a.member_id))}
+                                </span>
+                              )}
                               <span
                                 className={`block text-xs ${walletMatches(a.member_id) ? "text-green-700" : "text-red-700"}`}
-                                title={`This month's net income: ${formatINR(monthNetOf(a.member_id))}`}
+                                title={`Wallet + withdrawn this month should equal this month's net income: ${formatINR(monthNetOf(a.member_id))}`}
                               >
                                 {walletMatches(a.member_id) ? "✔ matches this month" : `✗ month net ${formatINR(monthNetOf(a.member_id))}`}
                               </span>
