@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
+import DigigoldNotice from "../components/DigigoldNotice";
 import { formatINR, formatGm, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
@@ -226,6 +227,8 @@ export default function Digigold() {
           <h1 className="text-2xl font-bold text-maroon-900">Digi-Gold</h1>
           <p className="text-sm text-maroon-900/50 mt-0.5">Buy and Sell transaction history, across all accounts</p>
         </div>
+
+        <DigigoldNotice />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">

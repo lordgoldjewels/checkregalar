@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
+import DigigoldNotice from "../components/DigigoldNotice";
 import { formatINR, formatNumber, formatDateTime, formatDate } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { fetchLatestGoldRate, currentWorth, type GoldRate } from "../lib/goldRate";
@@ -423,6 +424,7 @@ export default function AccountDetail() {
             Export CSV
           </button>
         </div>
+        <DigigoldNotice compact />
         <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
