@@ -2,21 +2,9 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
-import { formatINR, formatDate } from "../lib/format";
+import { formatINR, formatDate, formatDateTime } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
-
-const SI_CHARGE_RATE = 0.10; // Sales Incentive is charged 10%; net = 90% of gross.
-const PI_ACTUAL_RATE = 0.5; // Promotional Incentive pins show double the actual payout; actual = pin amount / 2.
-// Turnover Salary: actual payout is 80% of total_tb_salary above 15000, else 90% -
-// the site's own displayed charges/net_total don't reflect this tier, so we compute
-// the real figure ourselves rather than trusting what's stored.
-const TB_SALARY_THRESHOLD = 15000;
-const TB_ABOVE_THRESHOLD_RATE = 0.8;
-const TB_AT_OR_BELOW_THRESHOLD_RATE = 0.9;
-function actualTbSalary(totalTbSalary: number | null): number {
-  const gross = totalTbSalary ?? 0;
-  return gross * (gross > TB_SALARY_THRESHOLD ? TB_ABOVE_THRESHOLD_RATE : TB_AT_OR_BELOW_THRESHOLD_RATE);
-}
+import { SI_PAYOUT_RATE, PROMO_PAYOUT_RATE, PAID_PIN_STATUSES, UNPAID_PIN_STATUSES, tbpNet } from "../lib/income";
 
 interface AccountRow {
   member_id: string;
@@ -25,9 +13,20 @@ interface AccountRow {
 
 interface IncomeTotals {
   salesIncentiveGross: number;
-  turnoverSalary: number;
-  turnoverSalaryActual: number;
-  promotionalIncentive: number;
+  turnoverSalaryGross: number;
+  turnoverSalaryNet: number;
+  promotionalIncentive: number; // face amount of paid pins; payout is 50%
+}
+
+interface WalletRow {
+  account_id: string;
+  cash_balance: number | null;
+  captured_at: string;
+}
+
+interface PendingPins {
+  count: number;
+  face: number;
 }
 
 interface SalesIncentiveDetail {
@@ -78,6 +77,8 @@ export default function Income() {
   const [piDetails, setPiDetails] = useState<Map<string, PromotionalIncentiveDetail[]>>(new Map());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [expandedAccountMonths, setExpandedAccountMonths] = useState<Set<string>>(new Set());
+  const [wallets, setWallets]             = useState<Map<string, WalletRow>>(new Map());
+  const [pendingPins, setPendingPins]     = useState<Map<string, PendingPins>>(new Map());
   const [loading, setLoading]             = useState(true);
 
   function toggleMonth(key: string) {
@@ -119,7 +120,7 @@ export default function Income() {
   async function fetchData() {
     setLoading(true);
 
-    const [accountsRes, siRes, tsRes, piRes] = await Promise.all([
+    const [accountsRes, siRes, tsRes, piRes, pendingRes, walletRes] = await Promise.all([
       supabase.from("accounts").select("member_id, name").order("name"),
       supabase
         .from("sales_incentive")
@@ -128,7 +129,10 @@ export default function Income() {
       supabase
         .from("promotional_incentive_pins")
         .select("account_id, code, category, dated, amount, status")
-        .eq("status", "closed"),
+        .in("status", PAID_PIN_STATUSES),
+      supabase.from("promotional_incentive_pins").select("account_id, amount").in("status", UNPAID_PIN_STATUSES),
+      // Written by the API scraper; empty (or unreadable) just hides the wallet figures.
+      supabase.from("wallet_snapshots").select("account_id, cash_balance, captured_at"),
     ]);
 
     const tsRows = (tsRes.data as (TurnoverSalaryDetail & { id: number; account_id: string; month: string })[]) ?? [];
@@ -147,13 +151,13 @@ export default function Income() {
 
     const byAccount = new Map<string, IncomeTotals>();
     const ensureAccount = (id: string) => {
-      if (!byAccount.has(id)) byAccount.set(id, { salesIncentiveGross: 0, turnoverSalary: 0, turnoverSalaryActual: 0, promotionalIncentive: 0 });
+      if (!byAccount.has(id)) byAccount.set(id, { salesIncentiveGross: 0, turnoverSalaryGross: 0, turnoverSalaryNet: 0, promotionalIncentive: 0 });
       return byAccount.get(id)!;
     };
 
     const byMonth = new Map<string, IncomeTotals>();
     const ensureMonth = (key: string) => {
-      if (!byMonth.has(key)) byMonth.set(key, { salesIncentiveGross: 0, turnoverSalary: 0, turnoverSalaryActual: 0, promotionalIncentive: 0 });
+      if (!byMonth.has(key)) byMonth.set(key, { salesIncentiveGross: 0, turnoverSalaryGross: 0, turnoverSalaryNet: 0, promotionalIncentive: 0 });
       return byMonth.get(key)!;
     };
 
@@ -161,7 +165,7 @@ export default function Income() {
     const ensureMonthAccount = (monthKey: string, accountId: string) => {
       if (!byMonthByAccount.has(monthKey)) byMonthByAccount.set(monthKey, new Map());
       const accMap = byMonthByAccount.get(monthKey)!;
-      if (!accMap.has(accountId)) accMap.set(accountId, { salesIncentiveGross: 0, turnoverSalary: 0, turnoverSalaryActual: 0, promotionalIncentive: 0 });
+      if (!accMap.has(accountId)) accMap.set(accountId, { salesIncentiveGross: 0, turnoverSalaryGross: 0, turnoverSalaryNet: 0, promotionalIncentive: 0 });
       return accMap.get(accountId)!;
     };
 
@@ -183,17 +187,18 @@ export default function Income() {
       }
     }
     for (const row of tsRows) {
-      const actual = actualTbSalary(row.total_tb_salary);
-      ensureAccount(row.account_id).turnoverSalary += row.net_total ?? 0;
-      ensureAccount(row.account_id).turnoverSalaryActual += actual;
+      const gross = Number(row.total_tb_salary ?? 0);
+      const net = tbpNet(row);
+      ensureAccount(row.account_id).turnoverSalaryGross += gross;
+      ensureAccount(row.account_id).turnoverSalaryNet += net;
       // turnover_salary.month is "MM-YYYY" - normalize to "YYYY-MM" to match bill_date grouping.
       const [mm, yyyy] = row.month.split("-");
       if (mm && yyyy) {
         const monthKey = `${yyyy}-${mm}`;
-        ensureMonth(monthKey).turnoverSalary += row.net_total ?? 0;
-        ensureMonth(monthKey).turnoverSalaryActual += actual;
-        ensureMonthAccount(monthKey, row.account_id).turnoverSalary += row.net_total ?? 0;
-        ensureMonthAccount(monthKey, row.account_id).turnoverSalaryActual += actual;
+        ensureMonth(monthKey).turnoverSalaryGross += gross;
+        ensureMonth(monthKey).turnoverSalaryNet += net;
+        ensureMonthAccount(monthKey, row.account_id).turnoverSalaryGross += gross;
+        ensureMonthAccount(monthKey, row.account_id).turnoverSalaryNet += net;
 
         const key = monthAccountKey(monthKey, row.account_id);
         const list = tsByMonthAccount.get(key) ?? [];
@@ -222,18 +227,45 @@ export default function Income() {
     setSiDetails(siByMonthAccount);
     setTsDetails(tsByMonthAccount);
     setPiDetails(piByMonthAccount);
+
+    const pending = new Map<string, PendingPins>();
+    for (const row of (pendingRes.data as { account_id: string; amount: number | null }[]) ?? []) {
+      const p = pending.get(row.account_id) ?? { count: 0, face: 0 };
+      pending.set(row.account_id, { count: p.count + 1, face: p.face + Number(row.amount ?? 0) });
+    }
+    setPendingPins(pending);
+    setWallets(new Map(((walletRes.data as WalletRow[]) ?? []).map((w) => [w.account_id, w])));
     setLoading(false);
   }
 
-  const netOf = (t: IncomeTotals) => t.salesIncentiveGross * (1 - SI_CHARGE_RATE);
-  const promoActualOf = (t: IncomeTotals) => t.promotionalIncentive * PI_ACTUAL_RATE;
+  const netOf = (t: IncomeTotals) => t.salesIncentiveGross * SI_PAYOUT_RATE;
+  const promoActualOf = (t: IncomeTotals) => t.promotionalIncentive * PROMO_PAYOUT_RATE;
+  const totalNetOf = (t: IncomeTotals) => netOf(t) + t.turnoverSalaryNet + promoActualOf(t);
+
+  // The wallet holds the current month's credits after deductions, so it
+  // should equal that month's net income for the account.
+  const walletList = [...wallets.values()];
+  const walletMonth = walletList.length
+    ? walletList.map((w) => w.captured_at).sort().reverse()[0].slice(0, 7)
+    : null;
+  const walletCapturedAt = walletList.length ? walletList.map((w) => w.captured_at).sort().reverse()[0] : null;
+  const grandWallet = walletList.reduce((sum, w) => sum + Number(w.cash_balance ?? 0), 0);
+  const monthNetOf = (accountId: string) => {
+    const t = walletMonth ? monthlyByAccount.get(walletMonth)?.get(accountId) : undefined;
+    return t ? totalNetOf(t) : 0;
+  };
+  const walletMatches = (accountId: string) => {
+    const w = wallets.get(accountId);
+    return w != null && Math.abs(Number(w.cash_balance ?? 0) - monthNetOf(accountId)) < 1;
+  };
+  const grandPendingPins = [...pendingPins.values()].reduce((a, p) => ({ count: a.count + p.count, face: a.face + p.face }), { count: 0, face: 0 });
 
   const grandSalesIncentiveGross = [...totals.values()].reduce((s, t) => s + t.salesIncentiveGross, 0);
-  const grandSalesIncentiveNet   = grandSalesIncentiveGross * (1 - SI_CHARGE_RATE);
-  const grandTurnoverSalarySite  = [...totals.values()].reduce((s, t) => s + t.turnoverSalary, 0);
-  const grandTurnoverSalary      = [...totals.values()].reduce((s, t) => s + t.turnoverSalaryActual, 0);
+  const grandSalesIncentiveNet   = grandSalesIncentiveGross * SI_PAYOUT_RATE;
+  const grandTurnoverSalaryGross = [...totals.values()].reduce((s, t) => s + t.turnoverSalaryGross, 0);
+  const grandTurnoverSalary      = [...totals.values()].reduce((s, t) => s + t.turnoverSalaryNet, 0);
   const grandPromoIncentiveGross = [...totals.values()].reduce((s, t) => s + t.promotionalIncentive, 0);
-  const grandPromoIncentive      = grandPromoIncentiveGross * PI_ACTUAL_RATE;
+  const grandPromoIncentive      = grandPromoIncentiveGross * PROMO_PAYOUT_RATE;
   const grandTotal               = grandSalesIncentiveNet + grandTurnoverSalary + grandPromoIncentive;
 
   const monthKeys = [...monthlyTotals.keys()].sort().reverse();
@@ -241,12 +273,14 @@ export default function Income() {
   function exportByAccountCsv() {
     downloadCsv(
       "income-by-account.csv",
-      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary (Site)", "Turnover Salary (Actual)", "Promotional Incentive (Actual)", "Total (Net)"],
+      ["Name", "Member ID", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary (Gross)", "Turnover Salary (Net)", "Promotional Incentive (Actual)", "Total (Net)", "Wallet", "Pending Promo (Actual)"],
       accounts.map((a) => {
-        const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, turnoverSalaryActual: 0, promotionalIncentive: 0 };
+        const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalaryGross: 0, turnoverSalaryNet: 0, promotionalIncentive: 0 };
         const net = netOf(t);
         const promo = promoActualOf(t);
-        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalary, t.turnoverSalaryActual, promo, net + t.turnoverSalaryActual + promo];
+        const w = wallets.get(a.member_id);
+        const p = pendingPins.get(a.member_id);
+        return [a.name, a.member_id, t.salesIncentiveGross, net, t.turnoverSalaryGross, t.turnoverSalaryNet, promo, net + t.turnoverSalaryNet + promo, w?.cash_balance ?? null, p ? p.face * PROMO_PAYOUT_RATE : 0];
       })
     );
   }
@@ -254,12 +288,12 @@ export default function Income() {
   function exportByMonthCsv() {
     downloadCsv(
       "income-by-month.csv",
-      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary (Site)", "Turnover Salary (Actual)", "Promotional Incentive (Actual)", "Total (Net)"],
+      ["Month", "Sales Incentive (Gross)", "Sales Incentive (Net)", "Turnover Salary (Gross)", "Turnover Salary (Net)", "Promotional Incentive (Actual)", "Total (Net)"],
       monthKeys.map((key) => {
         const t = monthlyTotals.get(key)!;
         const net = netOf(t);
         const promo = promoActualOf(t);
-        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalary, t.turnoverSalaryActual, promo, net + t.turnoverSalaryActual + promo];
+        return [monthLabel(key), t.salesIncentiveGross, net, t.turnoverSalaryGross, t.turnoverSalaryNet, promo, net + t.turnoverSalaryNet + promo];
       })
     );
   }
@@ -269,31 +303,48 @@ export default function Income() {
       <div className="px-4 sm:px-8 py-6 sm:py-8">
         <div className="mb-6 sm:mb-8">
           <h1 className="text-2xl font-bold text-maroon-900">Income</h1>
-          <p className="text-sm text-maroon-900/50 mt-0.5">Sales Incentive (net of 10% charges) + Turnover-based Salary + Promotional Incentive, across all accounts</p>
+          <p className="text-sm text-maroon-900/50 mt-0.5">What is actually paid out: Sales Incentive less 10% (TDS 5% + service 5%), Turnover Salary less 10%, Promotional Incentive pins at 50%</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Sales Incentive (Net)</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandSalesIncentiveNet)}</p>
-            <p className="text-xs text-maroon-900/40 mt-1">gross {formatINR(grandSalesIncentiveGross)} &middot; 10% charges deducted</p>
+            <p className="text-xs text-maroon-900/40 mt-1">gross {formatINR(grandSalesIncentiveGross)} &middot; less TDS 5% + service 5%</p>
           </div>
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Turnover-based Salary</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandTurnoverSalary)}</p>
-            <p className="text-xs text-maroon-900/40 mt-1">
-              site shows {formatINR(grandTurnoverSalarySite)} &middot; additional charges {formatINR(grandTurnoverSalarySite - grandTurnoverSalary)}
-            </p>
+            <p className="text-xs text-maroon-900/40 mt-1">gross {formatINR(grandTurnoverSalaryGross)} &middot; less 10%</p>
           </div>
           <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Promotional Incentive</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandPromoIncentive)}</p>
-            <p className="text-xs text-maroon-900/40 mt-1">redeemed pins {formatINR(grandPromoIncentiveGross)} &middot; actual is 50%</p>
+            <p className="text-xs text-maroon-900/40 mt-1">paid pins {formatINR(grandPromoIncentiveGross)} &middot; paid out at 50%</p>
           </div>
           <div className="bg-gold-500 rounded-xl shadow-sm px-5 py-5">
             <p className="text-xs font-semibold text-maroon-900/60 uppercase tracking-wider">Total Income (Net)</p>
             <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandTotal)}</p>
             <p className="text-xs text-maroon-900/60 mt-1">combined</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
+          <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
+            <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Wallet Balance</p>
+            <p className="text-3xl font-bold mt-2 text-maroon-900">{walletList.length ? formatINR(grandWallet) : "—"}</p>
+            <p className="text-xs text-maroon-900/40 mt-1">
+              {walletCapturedAt
+                ? <>as of {formatDateTime(walletCapturedAt)} &middot; this month&apos;s credits after deductions</>
+                : "not captured yet"}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-maroon-100 shadow-sm px-5 py-5">
+            <p className="text-xs font-semibold text-maroon-900/40 uppercase tracking-wider">Upcoming Promotional Incentive</p>
+            <p className="text-3xl font-bold mt-2 text-maroon-900">{formatINR(grandPendingPins.face * PROMO_PAYOUT_RATE)}</p>
+            <p className="text-xs text-maroon-900/40 mt-1">
+              {grandPendingPins.count} unpaid pins &middot; face {formatINR(grandPendingPins.face)} &middot; paid out at 50%
+            </p>
           </div>
         </div>
 
@@ -319,15 +370,17 @@ export default function Income() {
                     <th className="px-5 py-3">Name</th>
                     <th className="px-5 py-3">Sales Incentive (Gross)</th>
                     <th className="px-5 py-3">Sales Incentive (Net)</th>
-                    <th className="px-5 py-3">Turnover Salary (Site)</th>
-                    <th className="px-5 py-3">Turnover Salary (Actual)</th>
+                    <th className="px-5 py-3">Turnover Salary (Gross)</th>
+                    <th className="px-5 py-3">Turnover Salary (Net)</th>
                     <th className="px-5 py-3">Promotional Incentive</th>
                     <th className="px-5 py-3">Total (Net)</th>
+                    <th className="px-5 py-3">Wallet</th>
+                    <th className="px-5 py-3">Upcoming Promo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-maroon-50">
                   {accounts.map((a) => {
-                    const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalary: 0, turnoverSalaryActual: 0, promotionalIncentive: 0 };
+                    const t = totals.get(a.member_id) ?? { salesIncentiveGross: 0, turnoverSalaryGross: 0, turnoverSalaryNet: 0, promotionalIncentive: 0 };
                     const net = netOf(t);
                     const promo = promoActualOf(t);
                     return (
@@ -339,16 +392,35 @@ export default function Income() {
                         </td>
                         <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                         <td className="px-5 py-3">{formatINR(net)}</td>
-                        <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.turnoverSalary)}</td>
-                        <td className="px-5 py-3">{formatINR(t.turnoverSalaryActual)}</td>
+                        <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.turnoverSalaryGross)}</td>
+                        <td className="px-5 py-3">{formatINR(t.turnoverSalaryNet)}</td>
                         <td className="px-5 py-3">{formatINR(promo)}</td>
-                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalaryActual + promo)}</td>
+                        <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalaryNet + promo)}</td>
+                        <td className="px-5 py-3">
+                          {wallets.has(a.member_id) ? (
+                            <>
+                              {formatINR(wallets.get(a.member_id)!.cash_balance)}
+                              <span
+                                className={`block text-xs ${walletMatches(a.member_id) ? "text-green-700" : "text-red-700"}`}
+                                title={`This month's net income: ${formatINR(monthNetOf(a.member_id))}`}
+                              >
+                                {walletMatches(a.member_id) ? "✔ matches this month" : `✗ month net ${formatINR(monthNetOf(a.member_id))}`}
+                              </span>
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-5 py-3">
+                          {formatINR((pendingPins.get(a.member_id)?.face ?? 0) * PROMO_PAYOUT_RATE)}
+                          <span className="block text-xs text-maroon-900/40">{pendingPins.get(a.member_id)?.count ?? 0} pins</span>
+                        </td>
                       </tr>
                     );
                   })}
                   {accounts.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-5 py-8 text-center text-maroon-900/40">
+                      <td colSpan={9} className="px-5 py-8 text-center text-maroon-900/40">
                         No accounts yet.
                       </td>
                     </tr>
@@ -360,10 +432,12 @@ export default function Income() {
                       <td className="px-5 py-3">Total</td>
                       <td className="px-5 py-3 text-maroon-900/50">{formatINR(grandSalesIncentiveGross)}</td>
                       <td className="px-5 py-3">{formatINR(grandSalesIncentiveNet)}</td>
-                      <td className="px-5 py-3 text-maroon-900/50">{formatINR(grandTurnoverSalarySite)}</td>
+                      <td className="px-5 py-3 text-maroon-900/50">{formatINR(grandTurnoverSalaryGross)}</td>
                       <td className="px-5 py-3">{formatINR(grandTurnoverSalary)}</td>
                       <td className="px-5 py-3">{formatINR(grandPromoIncentive)}</td>
                       <td className="px-5 py-3">{formatINR(grandTotal)}</td>
+                      <td className="px-5 py-3">{walletList.length ? formatINR(grandWallet) : "—"}</td>
+                      <td className="px-5 py-3">{formatINR(grandPendingPins.face * PROMO_PAYOUT_RATE)}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -394,7 +468,7 @@ export default function Income() {
               </div>
             </div>
             <p className="text-xs text-maroon-900/40 mb-3">
-              Promotional Incentive is attributed to the month a pin's redemption date falls in.
+              Promotional Incentive counts paid pins, in the month of the pin&apos;s date.
             </p>
             <div className="bg-white rounded-xl border border-maroon-100 shadow-sm overflow-hidden overflow-x-auto">
               <table className="w-full text-sm">
@@ -403,8 +477,8 @@ export default function Income() {
                     <th className="px-5 py-3">Month</th>
                     <th className="px-5 py-3">Sales Incentive (Gross)</th>
                     <th className="px-5 py-3">Sales Incentive (Net)</th>
-                    <th className="px-5 py-3">Turnover Salary (Site)</th>
-                    <th className="px-5 py-3">Turnover Salary (Actual)</th>
+                    <th className="px-5 py-3">Turnover Salary (Gross)</th>
+                    <th className="px-5 py-3">Turnover Salary (Net)</th>
                     <th className="px-5 py-3">Promotional Incentive</th>
                     <th className="px-5 py-3">Total (Net)</th>
                     <th className="px-5 py-3" />
@@ -417,8 +491,8 @@ export default function Income() {
                     const promo = promoActualOf(t);
                     const accountBreakdown = [...(monthlyByAccount.get(key) ?? new Map())].sort(
                       (a, b) =>
-                        netOf(b[1]) + b[1].turnoverSalaryActual + promoActualOf(b[1]) -
-                        (netOf(a[1]) + a[1].turnoverSalaryActual + promoActualOf(a[1]))
+                        netOf(b[1]) + b[1].turnoverSalaryNet + promoActualOf(b[1]) -
+                        (netOf(a[1]) + a[1].turnoverSalaryNet + promoActualOf(a[1]))
                     );
                     return (
                       <Fragment key={key}>
@@ -426,10 +500,10 @@ export default function Income() {
                           <td className="px-5 py-3 font-medium text-maroon-900">{monthLabel(key)}</td>
                           <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.salesIncentiveGross)}</td>
                           <td className="px-5 py-3">{formatINR(net)}</td>
-                          <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.turnoverSalary)}</td>
-                          <td className="px-5 py-3">{formatINR(t.turnoverSalaryActual)}</td>
+                          <td className="px-5 py-3 text-maroon-900/50">{formatINR(t.turnoverSalaryGross)}</td>
+                          <td className="px-5 py-3">{formatINR(t.turnoverSalaryNet)}</td>
                           <td className="px-5 py-3">{formatINR(promo)}</td>
-                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalaryActual + promo)}</td>
+                          <td className="px-5 py-3 font-semibold">{formatINR(net + t.turnoverSalaryNet + promo)}</td>
                           <td className="px-5 py-3 text-right">
                             <button
                               onClick={() => toggleMonth(key)}
@@ -456,10 +530,10 @@ export default function Income() {
                                   </td>
                                   <td className="px-4 py-2 text-sm text-maroon-900/50">{formatINR(at.salesIncentiveGross)}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(netOf(at))}</td>
-                                  <td className="px-4 py-2 text-sm text-maroon-900/50">{formatINR(at.turnoverSalary)}</td>
-                                  <td className="px-4 py-2 text-sm">{formatINR(at.turnoverSalaryActual)}</td>
+                                  <td className="px-4 py-2 text-sm text-maroon-900/50">{formatINR(at.turnoverSalaryGross)}</td>
+                                  <td className="px-4 py-2 text-sm">{formatINR(at.turnoverSalaryNet)}</td>
                                   <td className="px-4 py-2 text-sm">{formatINR(promoActualOf(at))}</td>
-                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalaryActual + promoActualOf(at))}</td>
+                                  <td className="px-4 py-2 text-sm font-semibold">{formatINR(netOf(at) + at.turnoverSalaryNet + promoActualOf(at))}</td>
                                   <td className="px-4 py-2 text-right">
                                     <button
                                       onClick={() => toggleAccountMonth(amKey)}
@@ -494,7 +568,7 @@ export default function Income() {
                                                   <td className="py-1 pr-4">{formatDate(r.bill_date)}</td>
                                                   <td className="py-1 pr-4 font-mono">{r.invoice_no}</td>
                                                   <td className="py-1 pr-4">{r.from_distributor}</td>
-                                                  <td className="py-1 pr-4">{formatINR((r.si_value ?? 0) * (1 - SI_CHARGE_RATE))}</td>
+                                                  <td className="py-1 pr-4">{formatINR((r.si_value ?? 0) * SI_PAYOUT_RATE)}</td>
                                                   <td className="py-1 pr-4">{r.status}</td>
                                                   <td className="py-1 pr-4">{r.pay_via}</td>
                                                 </tr>
@@ -506,8 +580,7 @@ export default function Income() {
                                       {ts.map((r) => (
                                         <div key={r.id}>
                                           <p className="text-xs font-semibold text-maroon-900/50 uppercase tracking-wider mb-1">
-                                            Turnover Salary &middot; {formatINR(r.total_tb_salary)} gross &middot; site shows {formatINR(r.net_total)} net &middot; actual {formatINR(actualTbSalary(r.total_tb_salary))}
-                                            {(r.total_tb_salary ?? 0) > TB_SALARY_THRESHOLD && " (20% charges, above ₹15,000)"}
+                                            Turnover Salary &middot; {formatINR(r.total_tb_salary)} gross &middot; {formatINR(tbpNet(r))} net (less 10%)
                                           </p>
                                           {r.breakdown.length > 0 && (
                                             <table className="w-full text-xs">
@@ -551,7 +624,7 @@ export default function Income() {
                                                   <td className="py-1 pr-4 font-mono">{r.code}</td>
                                                   <td className="py-1 pr-4">{r.category}</td>
                                                   <td className="py-1 pr-4">{formatDate(r.dated)}</td>
-                                                  <td className="py-1 pr-4">{formatINR((r.amount ?? 0) * PI_ACTUAL_RATE)}</td>
+                                                  <td className="py-1 pr-4">{formatINR((r.amount ?? 0) * PROMO_PAYOUT_RATE)}</td>
                                                 </tr>
                                               ))}
                                             </tbody>
