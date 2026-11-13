@@ -24,6 +24,10 @@ const NAV = [
     icon: <><path d="M4 7a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z" /><path d="M16 12h4M4 9h16" /></>,
   },
   {
+    to: "/distributors", label: "Distributors", end: false,
+    icon: <><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="19" r="2.5" /><circle cx="19" cy="19" r="2.5" /><path d="M12 7.5v4M12 11.5l-6 5M12 11.5l6 5" /></>,
+  },
+  {
     to: "/digigold", label: "Digi-Gold", end: true,
     icon: <><circle cx="12" cy="12" r="8" /><path d="M12 7v10M8.5 9.5h5.25a2 2 0 010 4H8.5" /></>,
   },

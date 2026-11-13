@@ -220,6 +220,9 @@ export default function AccountDetail() {
         <div className="mt-2 mb-6 sm:mb-8">
           <h1 className="text-2xl font-bold text-maroon-900">{account.name}</h1>
           <p className="text-sm text-maroon-900/50 mt-0.5 font-mono">{account.member_id} &middot; {account.phone_number}</p>
+          <Link to={`/distributors?account=${account.member_id}`} className="inline-block mt-1 text-sm text-maroon-700 hover:underline">
+            Network →
+          </Link>
         </div>
 
         {latest && (
