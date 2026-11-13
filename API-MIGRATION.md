@@ -262,8 +262,8 @@ src/fetchers/dashboard.mjs           -> GET /member/status
 src/fetchers/salesIncentive.mjs      -> GET /member/earnings?stream=IC
 src/fetchers/promotionalIncentive.mjs-> GET /member/earnings?stream=CBC
 src/fetchers/turnoverSalary.mjs      -> GET /member/earnings?stream=GAP (+gap-details)
-src/login-api.mjs         OTP login -> stores token    (npm run login:api -- <phone>)
-src/scrape-api.mjs        orchestrator                 (npm run scrape:api)
+src/login-api.mjs         OTP login -> stores token    (pnpm run login:api -- <phone>)
+src/scrape-api.mjs        orchestrator                 (pnpm run scrape:api)
 src/db.mjs                + getPhoneApiToken / savePhoneApiToken / markPhoneSessionExpired
 ```
 
@@ -289,8 +289,8 @@ yet — add the columns + mapping when ready. Nothing breaks without them.)
 
 ### Run
 ```
-npm run login:api -- <phone>     # once (OTP via WhatsApp) -> stores token
-npm run scrape:api               # each run: switch per account, fetch, upsert, persist token
+pnpm run login:api -- <phone>     # once (OTP via WhatsApp) -> stores token
+pnpm run scrape:api               # each run: switch per account, fetch, upsert, persist token
 ```
 
 ### Not wired (by decision)

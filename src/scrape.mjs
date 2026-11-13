@@ -127,7 +127,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
     await page.waitForTimeout(2000);
   }
   if (page.url().includes("/auth/login")) {
-    console.error(`Session for ${phone} has expired. Re-run: npm run login -- ${phone}`);
+    console.error(`Session for ${phone} has expired. Re-run: pnpm run login -- ${phone}`);
     const debugDir = await captureFailure(page, {
       memberId: `_session_${phone}`,
       step: "session_expired",
@@ -138,7 +138,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
     if (notificationSettings.session_expired) {
       await notifyPhoto(
         path.join(debugDir, "screenshot.png"),
-        `🔴 <b>Session expired</b> for ${phone} - run <code>npm run login -- ${phone}</code> to re-authenticate.`
+        `🔴 <b>Session expired</b> for ${phone} - run <code>pnpm run login -- ${phone}</code> to re-authenticate.`
       );
     }
     hadFailure = true;

@@ -24,7 +24,7 @@ try {
   const { token, mode, member } = await verifyOtp(phone, code);
   await savePhoneApiToken(phone, token);
   console.log(`✓ Logged in as ${member?.name ?? "?"} (${member?.member_code ?? "?"}), mode=${mode}.`);
-  console.log(`  Token stored for ${phone}. You can now run: npm run scrape:api`);
+  console.log(`  Token stored for ${phone}. You can now run: pnpm run scrape:api`);
 } catch (err) {
   console.error(`Login failed: ${err.message}`);
   process.exit(1);
