@@ -232,12 +232,12 @@ for (const { phone_number: phone, status } of phoneSessions) {
           ? `  ${name} (${memberId}): withdrawal ₹${w.amount} requested (${w.status})`
           : `  ${name} (${memberId}): withdrawal ₹${w.amount} ${w.previousStatus} -> ${w.status}`) : []),
       ...(notificationSettings.distributor_update ? distributorChanges.map((d) => {
-        if (d.isNew) return `  ${name} (${memberId}): new distributor ${d.name} (${d.member_code}) - ${d.rank}, bv ₹${d.bv}, gbv ₹${d.gbv}`;
+        if (d.isNew) return `  ${name} (${memberId}): new distributor ${d.name} (${d.member_code}) - ${d.rank}, BV ${d.bv}, GBV ${d.gbv}`;
         const parts = [];
         if (d.rankChanged) parts.push(`rank ${d.prevRank} -> ${d.rank}`);
         if (d.statusChanged) parts.push(`status ${d.prevStatus} -> ${d.status}`);
-        if (d.bvChanged) parts.push(`bv ₹${d.prevBv} -> ₹${d.bv}`);
-        if (d.gbvChanged) parts.push(`gbv ₹${d.prevGbv} -> ₹${d.gbv}`);
+        if (d.bvChanged) parts.push(`BV ${d.prevBv} -> ${d.bv}`);
+        if (d.gbvChanged) parts.push(`GBV ${d.prevGbv} -> ${d.gbv}`);
         return `  ${name} (${memberId}): ${d.name} (${d.member_code}) ${parts.join(", ")}`;
       }) : []),
     ]);
