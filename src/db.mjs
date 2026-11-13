@@ -442,6 +442,72 @@ export async function upsertWalletWithdrawals(accountId, rows) {
   });
 }
 
+/**
+ * Upserts the distributor network for one account (its flattened genealogy tree)
+ * and returns the changes worth flagging: a NEW member (join), a RANK change
+ * (promotion/demotion), a STATUS change, or a move in BV or GBV. Keyed by
+ * (account_id, member_code) so each account keeps its own view of the tree.
+ * Needs the distributors table
+ * (supabase/migrations/20261114120000_distributors.sql).
+ */
+export async function upsertDistributors(accountId, capturedAt, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("distributors")
+    .select("member_code, rank, status, bv, gbv")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertDistributors(${accountId}) fetch: ${fetchError.message}`);
+  const existingByCode = new Map((existing ?? []).map((r) => [r.member_code, r]));
+
+  const records = dedupeByKey(
+    rows.map((r) => ({
+      account_id: accountId,
+      member_code: r.memberCode,
+      name: r.name,
+      rank: r.rank,
+      status: r.status,
+      bv: parseAmount(r.bv),
+      gbv: parseAmount(r.gbv),
+      team_size: r.teamSize ?? null,
+      parent_code: r.parentCode,
+      level: r.level,
+      joined_on: r.joinedOn,
+      captured_at: capturedAt,
+      updated_at: new Date().toISOString(),
+    })),
+    (r) => r.member_code
+  );
+  const { error } = await supabase
+    .from("distributors")
+    .upsert(records, { onConflict: "account_id,member_code" });
+  if (error) throw new Error(`upsertDistributors(${accountId}): ${error.message}`);
+
+  // Initial seed for this account (no prior rows): everything looks "new", so
+  // report nothing - it's just the baseline, not a wave of real joins. Genuine
+  // joins/changes are caught on subsequent runs.
+  if (existingByCode.size === 0) return [];
+
+  return records.flatMap((r) => {
+    const prev = existingByCode.get(r.member_code);
+    if (!prev) return [{ ...r, isNew: true }];
+    const bvPrev = prev.bv == null ? null : Number(prev.bv);
+    const gbvPrev = prev.gbv == null ? null : Number(prev.gbv);
+    const rankChanged = prev.rank !== r.rank;
+    const statusChanged = prev.status !== r.status;
+    const bvChanged = bvPrev !== r.bv;
+    const gbvChanged = gbvPrev !== r.gbv;
+    if (rankChanged || statusChanged || bvChanged || gbvChanged) {
+      return [{
+        ...r, isNew: false,
+        prevRank: prev.rank, prevStatus: prev.status, prevBv: bvPrev, prevGbv: gbvPrev,
+        rankChanged, statusChanged, bvChanged, gbvChanged,
+      }];
+    }
+    return [];
+  });
+}
+
 export async function insertGoldRate(ratePerGm) {
   if (!dbEnabled) return;
   const { error } = await supabase.from("gold_rates").insert({ rate_per_gm: ratePerGm });
@@ -470,7 +536,7 @@ export async function finishScrapeRun(runId, { status, accountsScraped, errors }
 
 const ALL_NOTIFICATION_TYPES = [
   "sales_incentive", "turnover_salary", "promotional_incentive",
-  "digigold_buy", "digigold_sell", "wallet_balance",
+  "digigold_buy", "digigold_sell", "wallet_balance", "distributor_update",
   "scrape_crashed", "failed_to_load_home", "session_expired",
   "account_scrape_failure", "partial_run_summary",
 ];

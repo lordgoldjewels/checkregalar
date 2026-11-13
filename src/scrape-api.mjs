@@ -22,6 +22,7 @@ import {
   upsertPromotionalIncentivePins,
   upsertWalletSnapshot,
   upsertWalletWithdrawals,
+  upsertDistributors,
   insertGoldRate,
   startScrapeRun,
   finishScrapeRun,
@@ -35,6 +36,7 @@ import { fetchSalesIncentive } from "./fetchers/salesIncentive.mjs";
 import { fetchTurnoverSalary } from "./fetchers/turnoverSalary.mjs";
 import { fetchPromotionalIncentive } from "./fetchers/promotionalIncentive.mjs";
 import { fetchWallet, fetchWithdrawals } from "./fetchers/wallet.mjs";
+import { fetchDistributors } from "./fetchers/distributors.mjs";
 import { notify } from "./telegram.mjs";
 
 if (!dbEnabled) {
@@ -44,7 +46,7 @@ if (!dbEnabled) {
 
 const notificationSettings = await getNotificationSettings().catch(() => ({
   sales_incentive: true, turnover_salary: true, promotional_incentive: true,
-  wallet_balance: true, scrape_crashed: true, session_expired: true,
+  wallet_balance: true, distributor_update: true, scrape_crashed: true, session_expired: true,
   account_scrape_failure: true, partial_run_summary: true,
 }));
 
@@ -157,10 +159,20 @@ for (const { phone_number: phone, status } of phoneSessions) {
       } catch (err) {
         console.warn(`     withdrawals not synced: ${err.message}`);
       }
+      // Best effort: distributors is a supplementary feature, so neither a
+      // genealogy fetch error nor a missing table should fail the account's
+      // core earnings sync.
+      let distributorChanges = [];
+      try {
+        const distributors = await fetchDistributors(token);
+        distributorChanges = await upsertDistributors(memberId, scrapedAt, distributors);
+      } catch (err) {
+        console.warn(`     distributors not synced: ${err.message}`);
+      }
       console.log(`     synced to Supabase`);
 
-      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length) {
-        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges });
+      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length || distributorChanges.length) {
+        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges, distributorChanges });
       }
       accountsScraped++;
     } catch (err) {
@@ -199,7 +211,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   if (runErrors.length) hadFailure = true;
 
   if (earningUpdates.length > 0) {
-    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [] }) => [
+    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [], distributorChanges = [] }) => [
       ...(notificationSettings.sales_incentive ? invoiceChanges.map((inv) =>
         inv.isNew
           ? `  ${name} (${memberId}): new Sales Incentive ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
@@ -219,6 +231,15 @@ for (const { phone_number: phone, status } of phoneSessions) {
         w.isNew
           ? `  ${name} (${memberId}): withdrawal ₹${w.amount} requested (${w.status})`
           : `  ${name} (${memberId}): withdrawal ₹${w.amount} ${w.previousStatus} -> ${w.status}`) : []),
+      ...(notificationSettings.distributor_update ? distributorChanges.map((d) => {
+        if (d.isNew) return `  ${name} (${memberId}): new distributor ${d.name} (${d.member_code}) - ${d.rank}, bv ₹${d.bv}, gbv ₹${d.gbv}`;
+        const parts = [];
+        if (d.rankChanged) parts.push(`rank ${d.prevRank} -> ${d.rank}`);
+        if (d.statusChanged) parts.push(`status ${d.prevStatus} -> ${d.status}`);
+        if (d.bvChanged) parts.push(`bv ₹${d.prevBv} -> ₹${d.bv}`);
+        if (d.gbvChanged) parts.push(`gbv ₹${d.prevGbv} -> ₹${d.gbv}`);
+        return `  ${name} (${memberId}): ${d.name} (${d.member_code}) ${parts.join(", ")}`;
+      }) : []),
     ]);
     if (lines.length) await notify(`🟢 <b>New earnings</b> for ${phone}\n${lines.join("\n")}`).catch(() => {});
   }
