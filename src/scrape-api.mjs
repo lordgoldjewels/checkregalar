@@ -23,6 +23,7 @@ import {
   upsertWalletSnapshot,
   upsertWalletWithdrawals,
   upsertDistributors,
+  upsertBonds,
   insertGoldRate,
   startScrapeRun,
   finishScrapeRun,
@@ -37,6 +38,7 @@ import { fetchTurnoverSalary } from "./fetchers/turnoverSalary.mjs";
 import { fetchPromotionalIncentive } from "./fetchers/promotionalIncentive.mjs";
 import { fetchWallet, fetchWithdrawals } from "./fetchers/wallet.mjs";
 import { fetchDistributors } from "./fetchers/distributors.mjs";
+import { fetchBonds } from "./fetchers/bonds.mjs";
 import { notify } from "./telegram.mjs";
 
 if (!dbEnabled) {
@@ -169,10 +171,19 @@ for (const { phone_number: phone, status } of phoneSessions) {
       } catch (err) {
         console.warn(`     distributors not synced: ${err.message}`);
       }
+      // Best effort: bonds/contracts tracking is supplementary; a fetch error
+      // or a missing table must not fail the account's core earnings sync.
+      let bondChanges = [];
+      try {
+        const bonds = await fetchBonds(token);
+        bondChanges = await upsertBonds(memberId, scrapedAt, bonds);
+      } catch (err) {
+        console.warn(`     bonds not synced: ${err.message}`);
+      }
       console.log(`     synced to Supabase`);
 
-      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length || distributorChanges.length) {
-        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges, distributorChanges });
+      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length || distributorChanges.length || bondChanges.length) {
+        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges, distributorChanges, bondChanges });
       }
       accountsScraped++;
     } catch (err) {
@@ -211,7 +222,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   if (runErrors.length) hadFailure = true;
 
   if (earningUpdates.length > 0) {
-    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [], distributorChanges = [] }) => [
+    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [], distributorChanges = [], bondChanges = [] }) => [
       ...(notificationSettings.sales_incentive ? invoiceChanges.map((inv) =>
         inv.isNew
           ? `  ${name} (${memberId}): new Sales Incentive ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
@@ -239,6 +250,15 @@ for (const { phone_number: phone, status } of phoneSessions) {
         if (d.bvChanged) parts.push(`BV ${d.prevBv} -> ${d.bv}`);
         if (d.gbvChanged) parts.push(`GBV ${d.prevGbv} -> ${d.gbv}`);
         return `  ${name} (${memberId}): ${d.name} (${d.member_code}) ${parts.join(", ")}`;
+      }) : []),
+      ...(notificationSettings.bond_update ? bondChanges.map((b) => {
+        if (b.isNew) return `  ${name} (${memberId}): new contract ${b.plan_code} ${b.plan_name} - ₹${b.value} (expires ${b.expires_on}, ${b.status})`;
+        const parts = [];
+        if (b.statusChanged) parts.push(`status ${b.prevStatus} -> ${b.status}`);
+        if (b.rdChanged) parts.push(`rd_paid ₹${b.prevRdPaid} -> ₹${b.rd_paid}`);
+        if (b.cbcChanged) parts.push(`CBC pins ${b.prevCbcCount} -> ${b.cbc_count}`);
+        if (b.lvlChanged) parts.push(`LVL pins ${b.prevLvlcomCount} -> ${b.lvlcom_count}`);
+        return `  ${name} (${memberId}): contract ${b.plan_code} (inv ${b.invoice_no}) ${parts.join(", ")}`;
       }) : []),
     ]);
     if (lines.length) await notify(`🟢 <b>New earnings</b> for ${phone}\n${lines.join("\n")}`).catch(() => {});

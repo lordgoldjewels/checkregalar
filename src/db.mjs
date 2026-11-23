@@ -508,6 +508,72 @@ export async function upsertDistributors(accountId, capturedAt, rows) {
   });
 }
 
+/**
+ * Upserts bonds/contracts and returns the ones worth flagging: a brand-new
+ * contract, a status change (active -> matured/completed = the term closing),
+ * an rd_paid bump, or newly-issued cbc/lvlcom pins. The status/rd_paid signals
+ * are how the 12-month back-half CBC payout is caught when it lands.
+ */
+export async function upsertBonds(accountId, capturedAt, rows) {
+  if (!dbEnabled || rows.length === 0) return [];
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("bonds")
+    .select("bond_id, status, cbc_count, lvlcom_count, rd_paid")
+    .eq("account_id", accountId);
+  if (fetchError) throw new Error(`upsertBonds(${accountId}) fetch: ${fetchError.message}`);
+  const existingById = new Map((existing ?? []).map((r) => [Number(r.bond_id), r]));
+
+  const records = dedupeByKey(
+    rows.map((r) => ({
+      account_id: accountId,
+      bond_id: r.bondId,
+      invoice_no: r.invoiceNo,
+      plan_code: r.planCode,
+      plan_name: r.planName,
+      plan_type: r.planType,
+      value: parseAmount(r.value),
+      bond_date: r.bondDate,
+      expires_on: r.expiresOn,
+      status: r.status,
+      cbc_issued: r.cbcIssued ?? null,
+      cbc_count: r.cbcCount ?? null,
+      lvlcom_issued: r.lvlcomIssued ?? null,
+      lvlcom_count: r.lvlcomCount ?? null,
+      rd_paid: parseAmount(r.rdPaid),
+      captured_at: capturedAt,
+      updated_at: new Date().toISOString(),
+    })),
+    (r) => r.bond_id
+  );
+  const { error } = await supabase
+    .from("bonds")
+    .upsert(records, { onConflict: "account_id,bond_id" });
+  if (error) throw new Error(`upsertBonds(${accountId}): ${error.message}`);
+
+  // Initial seed (no prior rows): baseline, report nothing.
+  if (existingById.size === 0) return [];
+
+  return records.flatMap((r) => {
+    const prev = existingById.get(Number(r.bond_id));
+    if (!prev) return [{ ...r, isNew: true }];
+    const rdPrev = prev.rd_paid == null ? null : Number(prev.rd_paid);
+    const statusChanged = prev.status !== r.status;
+    const cbcChanged = (prev.cbc_count ?? null) !== (r.cbc_count ?? null);
+    const lvlChanged = (prev.lvlcom_count ?? null) !== (r.lvlcom_count ?? null);
+    const rdChanged = rdPrev !== r.rd_paid;
+    if (statusChanged || cbcChanged || lvlChanged || rdChanged) {
+      return [{
+        ...r, isNew: false,
+        prevStatus: prev.status, prevCbcCount: prev.cbc_count ?? null,
+        prevLvlcomCount: prev.lvlcom_count ?? null, prevRdPaid: rdPrev,
+        statusChanged, cbcChanged, lvlChanged, rdChanged,
+      }];
+    }
+    return [];
+  });
+}
+
 export async function insertGoldRate(ratePerGm) {
   if (!dbEnabled) return;
   const { error } = await supabase.from("gold_rates").insert({ rate_per_gm: ratePerGm });
@@ -537,6 +603,7 @@ export async function finishScrapeRun(runId, { status, accountsScraped, errors }
 const ALL_NOTIFICATION_TYPES = [
   "sales_incentive", "turnover_salary", "promotional_incentive",
   "digigold_buy", "digigold_sell", "wallet_balance", "distributor_update",
+  "bond_update",
   "scrape_crashed", "failed_to_load_home", "session_expired",
   "account_scrape_failure", "partial_run_summary",
 ];
