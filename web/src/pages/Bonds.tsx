@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
@@ -38,6 +38,9 @@ interface BondRow {
 }
 
 type SortKey = "value" | "cbc" | "bond_date" | "expires" | "anniversary";
+type ViewMode = "flat" | "grouped";
+
+const VIEW_LABEL: Record<ViewMode, string> = { flat: "Flat", grouped: "By account" };
 
 const ALL = "all";
 const SELECT_CLASS = "text-sm border border-maroon-200 rounded-lg px-3 py-1.5 bg-white text-maroon-900";
@@ -100,6 +103,7 @@ export default function Bonds() {
   const [statusFilter, setStatusFilter] = useState(ALL);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("value");
+  const [view, setView] = useState<ViewMode>("flat");
 
   useEffect(() => {
     (async () => {
@@ -185,7 +189,47 @@ export default function Bonds() {
   }
 
   const showAccount = filterAccount === ALL;
-  const colCount = showAccount ? 10 : 9;
+  const grouped = showAccount && view === "grouped";
+  const accountCol = showAccount && !grouped; // per-row account cell (hidden when grouped — it's the group header)
+  const colCount = accountCol ? 10 : 9;
+
+  const groups = useMemo(() => {
+    const m = new Map<string, BondRow[]>();
+    for (const r of filtered) {
+      const list = m.get(r.account_id) ?? [];
+      list.push(r);
+      m.set(r.account_id, list);
+    }
+    return [...m.entries()].sort((a, b) => accountName(a[0]).localeCompare(accountName(b[0])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, accounts]);
+
+  function renderRow(r: BondRow) {
+    return (
+      <tr key={`${r.account_id}-${r.bond_id}`} className="hover:bg-maroon-50/50">
+        {accountCol && (
+          <td className="px-5 py-3">
+            <Link to={`/accounts/${r.account_id}`} className="font-medium text-maroon-700 hover:underline">{accountName(r.account_id)}</Link>
+          </td>
+        )}
+        <td className="px-5 py-3">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-maroon-900">{r.plan_name ?? "—"}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${planTypeBadge(r.plan_type)}`}>{r.plan_type ?? "—"}</span>
+          </div>
+          <div className="text-xs text-maroon-900/40 font-mono">{r.plan_code ?? ""}</div>
+        </td>
+        <td className="px-5 py-3 font-mono text-xs text-maroon-900/60">{r.invoice_no ?? "—"}</td>
+        <td className="px-5 py-3 text-right font-semibold">{formatINR(r.value)}</td>
+        <td className="px-5 py-3 text-xs text-maroon-900/70">{formatDate(r.bond_date)} → {formatDate(r.expires_on)}</td>
+        <td className="px-5 py-3">{formatDate(anniversary(r.bond_date))}</td>
+        <td className="px-5 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge(r.status)}`}>{r.status ?? "—"}</span></td>
+        <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.cbc_count)}<span className="text-maroon-900/40"> / {formatNumber(r.cbc_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
+        <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.lvlcom_count)}<span className="text-maroon-900/40"> / {formatNumber(r.lvlcom_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
+        <td className="px-5 py-3 text-right">{formatINR(r.rd_paid)}</td>
+      </tr>
+    );
+  }
 
   return (
     <Layout>
@@ -273,6 +317,22 @@ export default function Bonds() {
               <option value="anniversary">12-mo mark (soonest)</option>
             </select>
           </div>
+          {showAccount && (
+            <div>
+              <label className={LABEL_CLASS}>View</label>
+              <div className="inline-flex rounded-lg border border-maroon-200 overflow-hidden">
+                {(["flat", "grouped"] as ViewMode[]).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`text-sm px-3 py-1.5 ${view === v ? "bg-maroon-700 text-white" : "bg-white text-maroon-900 hover:bg-maroon-50"}`}
+                  >
+                    {VIEW_LABEL[v]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <button
             onClick={exportCsv}
             disabled={!filtered.length}
@@ -295,7 +355,7 @@ export default function Bonds() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-maroon-50 text-left text-xs font-semibold text-maroon-900/50 uppercase tracking-wider">
-                  {showAccount && <th className="px-5 py-3">Account</th>}
+                  {accountCol && <th className="px-5 py-3">Account</th>}
                   <th className="px-5 py-3">Plan</th>
                   <th className="px-5 py-3">Invoice</th>
                   <th className="px-5 py-3 text-right">Value</th>
@@ -308,35 +368,32 @@ export default function Bonds() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-maroon-50">
-                {filtered.length ? (
-                  filtered.map((r) => (
-                    <tr key={`${r.account_id}-${r.bond_id}`} className="hover:bg-maroon-50/50">
-                      {showAccount && (
-                        <td className="px-5 py-3">
-                          <Link to={`/accounts/${r.account_id}`} className="font-medium text-maroon-700 hover:underline">{accountName(r.account_id)}</Link>
-                        </td>
-                      )}
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-maroon-900">{r.plan_name ?? "—"}</span>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${planTypeBadge(r.plan_type)}`}>{r.plan_type ?? "—"}</span>
-                        </div>
-                        <div className="text-xs text-maroon-900/40 font-mono">{r.plan_code ?? ""}</div>
-                      </td>
-                      <td className="px-5 py-3 font-mono text-xs text-maroon-900/60">{r.invoice_no ?? "—"}</td>
-                      <td className="px-5 py-3 text-right font-semibold">{formatINR(r.value)}</td>
-                      <td className="px-5 py-3 text-xs text-maroon-900/70">{formatDate(r.bond_date)} → {formatDate(r.expires_on)}</td>
-                      <td className="px-5 py-3">{formatDate(anniversary(r.bond_date))}</td>
-                      <td className="px-5 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge(r.status)}`}>{r.status ?? "—"}</span></td>
-                      <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.cbc_count)}<span className="text-maroon-900/40"> / {formatNumber(r.cbc_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
-                      <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.lvlcom_count)}<span className="text-maroon-900/40"> / {formatNumber(r.lvlcom_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
-                      <td className="px-5 py-3 text-right">{formatINR(r.rd_paid)}</td>
-                    </tr>
-                  ))
-                ) : (
+                {!filtered.length ? (
                   <tr>
                     <td colSpan={colCount} className="px-5 py-8 text-center text-maroon-900/40">No contracts match these filters.</td>
                   </tr>
+                ) : grouped ? (
+                  groups.map(([acctId, list]) => {
+                    const gValue = list.reduce((s, r) => s + Number(r.value ?? 0), 0);
+                    const gCbc = list.filter((r) => carriesCbc(r.plan_type)).reduce((s, r) => s + Number(r.cbc_count ?? 0), 0);
+                    return (
+                      <Fragment key={acctId}>
+                        <tr className="bg-maroon-100/40">
+                          <td colSpan={colCount} className="px-5 py-2.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <Link to={`/accounts/${acctId}`} className="font-semibold text-maroon-800 hover:underline">{accountName(acctId)}</Link>
+                              <span className="text-xs text-maroon-900/50">
+                                {list.length} contract{list.length > 1 ? "s" : ""} · {formatINR(gValue)} · {formatNumber(gCbc)} CBC pins
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {sortBonds(list, sortKey).map(renderRow)}
+                      </Fragment>
+                    );
+                  })
+                ) : (
+                  filtered.map(renderRow)
                 )}
               </tbody>
             </table>
