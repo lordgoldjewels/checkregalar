@@ -24,8 +24,16 @@ const NAV = [
     icon: <><path d="M4 7a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z" /><path d="M16 12h4M4 9h16" /></>,
   },
   {
+    to: "/in-hand", label: "In-Hand", end: false,
+    icon: <><path d="M7 11V6a1.5 1.5 0 013 0v4M10 10V4.5a1.5 1.5 0 013 0V10M13 10V5.5a1.5 1.5 0 013 0V12" /><path d="M16 9.5a1.5 1.5 0 013 0V14a7 7 0 01-7 7h-1a6 6 0 01-5-2.7L3.5 15a1.5 1.5 0 012.4-1.8L7 14.5" /></>,
+  },
+  {
     to: "/distributors", label: "Distributors", end: false,
     icon: <><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="19" r="2.5" /><circle cx="19" cy="19" r="2.5" /><path d="M12 7.5v4M12 11.5l-6 5M12 11.5l6 5" /></>,
+  },
+  {
+    to: "/bonds", label: "Bonds & Contracts", end: false,
+    icon: <><path d="M5 4h11l3 3v13a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" /><path d="M8 10h8M8 14h8M8 18h5" /></>,
   },
   {
     to: "/digigold", label: "Digi-Gold", end: true,
