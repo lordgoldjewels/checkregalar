@@ -24,6 +24,10 @@ import {
   upsertWalletWithdrawals,
   upsertDistributors,
   upsertBonds,
+  getCoverageAlertState,
+  setCoverageAlertState,
+  getBondPayoutStages,
+  setBondPayoutStage,
   insertGoldRate,
   startScrapeRun,
   finishScrapeRun,
@@ -39,6 +43,7 @@ import { fetchPromotionalIncentive } from "./fetchers/promotionalIncentive.mjs";
 import { fetchWallet, fetchWithdrawals } from "./fetchers/wallet.mjs";
 import { fetchDistributors } from "./fetchers/distributors.mjs";
 import { fetchBonds } from "./fetchers/bonds.mjs";
+import { evaluateContractRisk } from "./contractRisk.mjs";
 import { notify } from "./telegram.mjs";
 
 if (!dbEnabled) {
@@ -174,16 +179,28 @@ for (const { phone_number: phone, status } of phoneSessions) {
       // Best effort: bonds/contracts tracking is supplementary; a fetch error
       // or a missing table must not fail the account's core earnings sync.
       let bondChanges = [];
+      let contractRisk = [];
       try {
         const bonds = await fetchBonds(token);
         bondChanges = await upsertBonds(memberId, scrapedAt, bonds);
+        // Contract-risk alerts: coverage countdown (per account) + deferred-payout
+        // milestones (per contract). State is read AFTER upsertBonds so new bonds
+        // already have a payout_stage row. Best-effort within the bonds try.
+        const [coverageState, payoutStages] = await Promise.all([
+          getCoverageAlertState(memberId),
+          getBondPayoutStages(memberId),
+        ]);
+        const risk = evaluateContractRisk({ bonds, coverageState, payoutStages, now: Date.now() });
+        contractRisk = risk.lines;
+        await setCoverageAlertState(memberId, risk.coverage);
+        for (const u of risk.payoutStageUpdates) await setBondPayoutStage(memberId, u.bondId, u.stage);
       } catch (err) {
         console.warn(`     bonds not synced: ${err.message}`);
       }
       console.log(`     synced to Supabase`);
 
-      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length || distributorChanges.length || bondChanges.length) {
-        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges, distributorChanges, bondChanges });
+      if (newInvoices.length || salaryChanges.length || pinChanges.length || walletChange || withdrawalChanges.length || distributorChanges.length || bondChanges.length || contractRisk.length) {
+        earningUpdates.push({ memberId, name, invoiceChanges: newInvoices, salaryChanges, pinChanges, walletChange, withdrawalChanges, distributorChanges, bondChanges, contractRisk });
       }
       accountsScraped++;
     } catch (err) {
@@ -222,7 +239,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
   if (runErrors.length) hadFailure = true;
 
   if (earningUpdates.length > 0) {
-    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [], distributorChanges = [], bondChanges = [] }) => [
+    const lines = earningUpdates.flatMap(({ memberId, name, invoiceChanges, salaryChanges, pinChanges, walletChange, withdrawalChanges = [], distributorChanges = [], bondChanges = [], contractRisk = [] }) => [
       ...(notificationSettings.sales_incentive ? invoiceChanges.map((inv) =>
         inv.isNew
           ? `  ${name} (${memberId}): new Sales Incentive ${inv.invoice_no} - ₹${inv.si_value} (${inv.bill_date}, ${inv.status})`
@@ -260,6 +277,7 @@ for (const { phone_number: phone, status } of phoneSessions) {
         if (b.lvlChanged) parts.push(`LVL pins ${b.prevLvlcomCount} -> ${b.lvlcom_count}`);
         return `  ${name} (${memberId}): contract ${b.plan_code} (inv ${b.invoice_no}) ${parts.join(", ")}`;
       }) : []),
+      ...(notificationSettings.contract_risk ? contractRisk.map((line) => `  ${name} (${memberId}): ${line}`) : []),
     ]);
     if (lines.length) await notify(`🟢 <b>New earnings</b> for ${phone}\n${lines.join("\n")}`).catch(() => {});
   }

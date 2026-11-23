@@ -15,6 +15,10 @@ const TYPES: NotificationType[] = [
   { type: "promotional_incentive", label: "Promotional Incentive", category: "New Earnings" },
   { type: "digigold_buy", label: "DigiGold Buy", category: "DigiGold Transactions" },
   { type: "digigold_sell", label: "DigiGold Sell", category: "DigiGold Transactions" },
+  { type: "wallet_balance", label: "Wallet Balance", category: "Wallet & Network" },
+  { type: "distributor_update", label: "Distributor Update", category: "Wallet & Network" },
+  { type: "bond_update", label: "Contract Update", category: "Contracts" },
+  { type: "contract_risk", label: "Contract Risk (no / expiring contract)", category: "Contracts" },
   { type: "scrape_crashed", label: "Scrape Crashed", category: "Failures" },
   { type: "failed_to_load_home", label: "Failed to Load Home", category: "Failures" },
   { type: "session_expired", label: "Session Expired", category: "Failures" },
@@ -22,7 +26,7 @@ const TYPES: NotificationType[] = [
   { type: "partial_run_summary", label: "Partial Run Summary", category: "Failures" },
 ];
 
-const CATEGORIES = ["New Earnings", "DigiGold Transactions", "Failures"];
+const CATEGORIES = ["New Earnings", "DigiGold Transactions", "Wallet & Network", "Contracts", "Failures"];
 
 export default function Settings() {
   const [enabled, setEnabled] = useState<Map<string, boolean>>(new Map());

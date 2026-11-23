@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import Layout from "../components/Layout";
-import { formatINR, formatNumber, formatDate, formatDateTime } from "../lib/format";
+import { formatINR, formatNumber, formatDate, formatDateTime, daysUntil } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 
 // One row per (tracked account, bond) from GET /member/bonds — the "Schemes &
@@ -173,6 +173,50 @@ export default function Bonds() {
   const cbcTotal = filtered.filter((r) => carriesCbc(r.plan_type)).reduce((s, r) => s + Number(r.cbc_issued ?? 0), 0);
   const capturedAt = rows.reduce<string | null>((max, r) => (r.captured_at && (!max || r.captured_at > max) ? r.captured_at : max), null);
 
+  // --- Contract risk (account-level, independent of the current filters) ---
+  const COVERAGE_WINDOW = 90; // days
+  const PAYOUT_WINDOW = 30; // days
+  // Per account, the latest-expiring active digital contract keeps it earning.
+  const coverageByAccount = useMemo(() => {
+    const m = new Map<string, BondRow>();
+    for (const r of rows) {
+      if (!((r.status ?? "").toLowerCase() === "active" && carriesCbc(r.plan_type)) || !r.expires_on) continue;
+      const cur = m.get(r.account_id);
+      if (!cur || String(r.expires_on) > String(cur.expires_on)) m.set(r.account_id, r);
+    }
+    return m;
+  }, [rows]);
+  const noContractAccounts = useMemo(
+    () => accounts.filter((a) => !coverageByAccount.has(a.member_id)),
+    [accounts, coverageByAccount]
+  );
+  const coverageEnding = useMemo(() => {
+    const out: { account: AccountRow; bond: BondRow; days: number }[] = [];
+    for (const a of accounts) {
+      const bond = coverageByAccount.get(a.member_id);
+      if (!bond) continue;
+      const d = daysUntil(bond.expires_on);
+      if (d != null && d >= 0 && d <= COVERAGE_WINDOW) out.push({ account: a, bond, days: d });
+    }
+    return out.sort((x, y) => x.days - y.days);
+  }, [accounts, coverageByAccount]);
+  const payoutsDue = useMemo(() => {
+    const out: { r: BondRow; mark: string; days: number }[] = [];
+    for (const r of rows) {
+      if (!((r.status ?? "").toLowerCase() === "active" && carriesCbc(r.plan_type))) continue;
+      const mark = anniversary(r.bond_date);
+      const d = daysUntil(mark);
+      if (mark && d != null && d >= 0 && d <= PAYOUT_WINDOW) out.push({ r, mark, days: d });
+    }
+    return out.sort((x, y) => x.days - y.days);
+  }, [rows]);
+  // Keys of the one contract per account whose expiry defines coverage (badged).
+  const coverageBondKeys = useMemo(
+    () => new Set([...coverageByAccount.values()].map((b) => `${b.account_id}-${b.bond_id}`)),
+    [coverageByAccount]
+  );
+  const hasRisk = noContractAccounts.length > 0 || coverageEnding.length > 0 || payoutsDue.length > 0;
+
   function exportCsv() {
     downloadCsv(
       `bonds-${filterAccount === ALL ? "all" : filterAccount}.csv`,
@@ -230,8 +274,24 @@ export default function Bonds() {
         </td>
         <td className="px-5 py-3 font-mono text-xs text-maroon-900/60">{r.invoice_no ?? "—"}</td>
         <td className="px-5 py-3 text-right font-semibold">{formatINR(r.value)}</td>
-        <td className="px-5 py-3 text-xs text-maroon-900/70">{formatDate(r.bond_date)} → {formatDate(r.expires_on)}</td>
-        <td className="px-5 py-3">{formatDate(anniversary(r.bond_date))}</td>
+        <td className="px-5 py-3 text-xs text-maroon-900/70">
+          {formatDate(r.bond_date)} → {formatDate(r.expires_on)}
+          {coverageBondKeys.has(`${r.account_id}-${r.bond_id}`) && (() => {
+            const d = daysUntil(r.expires_on);
+            return d != null && d >= 0 && d <= COVERAGE_WINDOW
+              ? <span className="ml-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700">coverage ends in {d}d</span>
+              : null;
+          })()}
+        </td>
+        <td className="px-5 py-3">
+          {formatDate(anniversary(r.bond_date))}
+          {(r.status ?? "").toLowerCase() === "active" && carriesCbc(r.plan_type) && (() => {
+            const d = daysUntil(anniversary(r.bond_date));
+            return d != null && d >= 0 && d <= PAYOUT_WINDOW
+              ? <span className="ml-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-blue-100 text-blue-700">payout in {d}d</span>
+              : null;
+          })()}
+        </td>
         <td className="px-5 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge(r.status)}`}>{r.status ?? "—"}</span></td>
         <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.cbc_count)}<span className="text-maroon-900/40"> / {formatNumber(r.cbc_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
         <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.lvlcom_count)}<span className="text-maroon-900/40"> / {formatNumber(r.lvlcom_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
@@ -274,6 +334,41 @@ export default function Bonds() {
             <p className="text-xs text-maroon-900/40 mt-1">with contracts shown</p>
           </div>
         </div>
+
+        {hasRisk && (
+          <div className="mb-6 space-y-3">
+            {noContractAccounts.length > 0 && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4">
+                <p className="text-sm font-semibold text-red-800">⚠ No active contract — income stopped</p>
+                <ul className="mt-1 text-sm text-red-700 space-y-0.5">
+                  {noContractAccounts.map((a) => (
+                    <li key={a.member_id}>{a.name} — add a new plan to resume earning</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {coverageEnding.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
+                <p className="text-sm font-semibold text-amber-800">Contract coverage ending soon — add a new plan</p>
+                <ul className="mt-1 text-sm text-amber-800/90 space-y-0.5">
+                  {coverageEnding.map(({ account, bond, days }) => (
+                    <li key={account.member_id}>{account.name} — ends in {days}d ({formatDate(bond.expires_on)}, last contract {bond.plan_name})</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {payoutsDue.length > 0 && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4">
+                <p className="text-sm font-semibold text-blue-800">Deferred CBC payout due soon — check the wallet</p>
+                <ul className="mt-1 text-sm text-blue-800/90 space-y-0.5">
+                  {payoutsDue.map(({ r, mark, days }) => (
+                    <li key={`${r.account_id}-${r.bond_id}`}>{accountName(r.account_id)} — {r.plan_name} held-back half in {days}d ({formatDate(mark)})</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mb-6 rounded-xl border border-maroon-100 bg-white px-5 py-4 text-sm text-maroon-900/70">
           <span className="font-semibold text-maroon-900">How the CBC payout works: </span>

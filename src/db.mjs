@@ -574,6 +574,54 @@ export async function upsertBonds(accountId, capturedAt, rows) {
   });
 }
 
+/** Reads the per-account coverage-alert countdown state (contract-risk). */
+export async function getCoverageAlertState(accountId) {
+  if (!dbEnabled) return {};
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("coverage_target, coverage_last_alerted, coverage_expired_alerted")
+    .eq("member_id", accountId)
+    .maybeSingle();
+  if (error) throw new Error(`getCoverageAlertState(${accountId}): ${error.message}`);
+  return data ?? {};
+}
+
+/** Persists the coverage-alert countdown state after an evaluation. */
+export async function setCoverageAlertState(accountId, { target, lastAlerted, expiredAlerted }) {
+  if (!dbEnabled) return;
+  const { error } = await supabase
+    .from("accounts")
+    .update({
+      coverage_target: target ?? null,
+      coverage_last_alerted: lastAlerted ?? null,
+      coverage_expired_alerted: !!expiredAlerted,
+    })
+    .eq("member_id", accountId);
+  if (error) throw new Error(`setCoverageAlertState(${accountId}): ${error.message}`);
+}
+
+/** Map of bond_id -> payout_stage for an account (deferred-payout countdown). */
+export async function getBondPayoutStages(accountId) {
+  if (!dbEnabled) return new Map();
+  const { data, error } = await supabase
+    .from("bonds")
+    .select("bond_id, payout_stage")
+    .eq("account_id", accountId);
+  if (error) throw new Error(`getBondPayoutStages(${accountId}): ${error.message}`);
+  return new Map((data ?? []).map((r) => [Number(r.bond_id), Number(r.payout_stage ?? 0)]));
+}
+
+/** Advances a single bond's payout milestone stage. */
+export async function setBondPayoutStage(accountId, bondId, stage) {
+  if (!dbEnabled) return;
+  const { error } = await supabase
+    .from("bonds")
+    .update({ payout_stage: stage })
+    .eq("account_id", accountId)
+    .eq("bond_id", bondId);
+  if (error) throw new Error(`setBondPayoutStage(${accountId}, ${bondId}): ${error.message}`);
+}
+
 export async function insertGoldRate(ratePerGm) {
   if (!dbEnabled) return;
   const { error } = await supabase.from("gold_rates").insert({ rate_per_gm: ratePerGm });
@@ -603,7 +651,7 @@ export async function finishScrapeRun(runId, { status, accountsScraped, errors }
 const ALL_NOTIFICATION_TYPES = [
   "sales_incentive", "turnover_salary", "promotional_incentive",
   "digigold_buy", "digigold_sell", "wallet_balance", "distributor_update",
-  "bond_update",
+  "bond_update", "contract_risk",
   "scrape_crashed", "failed_to_load_home", "session_expired",
   "account_scrape_failure", "partial_run_summary",
 ];
