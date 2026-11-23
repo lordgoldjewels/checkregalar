@@ -67,6 +67,14 @@ function statusBadge(status: string | null): string {
   return "bg-amber-100 text-amber-700";
 }
 
+// Gold/silver purchase plans (e.g. G10) pay no promotional (CBC) or level
+// commission — the calculator returns cbc_total 0 for them, and their bonds'
+// cbc/lvlcom counters never issue. Only the digital contract plans carry CBC.
+function carriesCbc(type: string | null): boolean {
+  const t = (type ?? "").toLowerCase();
+  return t !== "gold" && t !== "silver";
+}
+
 function sortBonds(list: BondRow[], key: SortKey): BondRow[] {
   const sorted = [...list];
   sorted.sort((a, b) => {
@@ -148,8 +156,8 @@ export default function Bonds() {
   const committed = filtered.reduce((s, r) => s + Number(r.value ?? 0), 0);
   const digitalValue = filtered.filter((r) => (r.plan_type ?? "").toLowerCase() === "digital").reduce((s, r) => s + Number(r.value ?? 0), 0);
   const activeCount = filtered.filter((r) => (r.status ?? "").toLowerCase() === "active").length;
-  const cbcIssued = filtered.reduce((s, r) => s + Number(r.cbc_count ?? 0), 0);
-  const cbcTotal = filtered.reduce((s, r) => s + Number(r.cbc_issued ?? 0), 0);
+  const cbcIssued = filtered.filter((r) => carriesCbc(r.plan_type)).reduce((s, r) => s + Number(r.cbc_count ?? 0), 0);
+  const cbcTotal = filtered.filter((r) => carriesCbc(r.plan_type)).reduce((s, r) => s + Number(r.cbc_issued ?? 0), 0);
   const capturedAt = rows.reduce<string | null>((max, r) => (r.captured_at && (!max || r.captured_at > max) ? r.captured_at : max), null);
 
   function exportCsv() {
@@ -167,10 +175,10 @@ export default function Bonds() {
         r.expires_on,
         anniversary(r.bond_date),
         r.status,
-        r.cbc_count,
-        r.cbc_issued,
-        r.lvlcom_count,
-        r.lvlcom_issued,
+        carriesCbc(r.plan_type) ? r.cbc_count : "",
+        carriesCbc(r.plan_type) ? r.cbc_issued : "",
+        carriesCbc(r.plan_type) ? r.lvlcom_count : "",
+        carriesCbc(r.plan_type) ? r.lvlcom_issued : "",
         r.rd_paid,
       ])
     );
@@ -320,8 +328,8 @@ export default function Bonds() {
                       <td className="px-5 py-3 text-xs text-maroon-900/70">{formatDate(r.bond_date)} → {formatDate(r.expires_on)}</td>
                       <td className="px-5 py-3">{formatDate(anniversary(r.bond_date))}</td>
                       <td className="px-5 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge(r.status)}`}>{r.status ?? "—"}</span></td>
-                      <td className="px-5 py-3 text-right">{formatNumber(r.cbc_count)}<span className="text-maroon-900/40"> / {formatNumber(r.cbc_issued)}</span></td>
-                      <td className="px-5 py-3 text-right">{formatNumber(r.lvlcom_count)}<span className="text-maroon-900/40"> / {formatNumber(r.lvlcom_issued)}</span></td>
+                      <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.cbc_count)}<span className="text-maroon-900/40"> / {formatNumber(r.cbc_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
+                      <td className="px-5 py-3 text-right">{carriesCbc(r.plan_type) ? <>{formatNumber(r.lvlcom_count)}<span className="text-maroon-900/40"> / {formatNumber(r.lvlcom_issued)}</span></> : <span className="text-maroon-900/30">—</span>}</td>
                       <td className="px-5 py-3 text-right">{formatINR(r.rd_paid)}</td>
                     </tr>
                   ))
