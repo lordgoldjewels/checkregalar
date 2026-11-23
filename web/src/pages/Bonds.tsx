@@ -99,8 +99,17 @@ export default function Bonds() {
   const [loading, setLoading] = useState(true);
 
   const filterAccount = searchParams.get("account") ?? ALL;
-  const [planFilter, setPlanFilter] = useState(ALL);
+  const [planFilter, setPlanFilter] = useState<Set<string>>(new Set()); // empty = all plans
   const [statusFilter, setStatusFilter] = useState(ALL);
+
+  function togglePlan(plan: string) {
+    setPlanFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(plan)) next.delete(plan);
+      else next.add(plan);
+      return next;
+    });
+  }
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("value");
   const [view, setView] = useState<ViewMode>("flat");
@@ -144,7 +153,7 @@ export default function Bonds() {
   );
 
   const matches = (r: BondRow) => {
-    if (planFilter !== ALL && r.plan_name !== planFilter) return false;
+    if (planFilter.size && (r.plan_name == null || !planFilter.has(r.plan_name))) return false;
     if (statusFilter !== ALL && r.status !== statusFilter) return false;
     const q = search.trim().toLowerCase();
     if (q && !(r.plan_name ?? "").toLowerCase().includes(q) && !(r.plan_code ?? "").toLowerCase().includes(q) && !(r.invoice_no ?? "").toLowerCase().includes(q)) return false;
@@ -284,11 +293,27 @@ export default function Bonds() {
             </select>
           </div>
           <div>
-            <label className={LABEL_CLASS}>Plan</label>
-            <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)} className={SELECT_CLASS}>
-              <option value={ALL}>All plans</option>
-              {plans.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <label className={LABEL_CLASS}>Plan{planFilter.size ? ` (${planFilter.size})` : ""}</label>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {plans.map((p) => {
+                const on = planFilter.has(p);
+                return (
+                  <button
+                    key={p}
+                    onClick={() => togglePlan(p)}
+                    aria-pressed={on}
+                    className={`text-xs rounded-full px-3 py-1.5 border transition-colors ${on ? "bg-maroon-700 text-white border-maroon-700" : "bg-white text-maroon-900 border-maroon-200 hover:bg-maroon-50"}`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+              {planFilter.size > 0 && (
+                <button onClick={() => setPlanFilter(new Set())} className="text-xs px-2 py-1.5 text-maroon-700 hover:underline">
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <div>
             <label className={LABEL_CLASS}>Status</label>
